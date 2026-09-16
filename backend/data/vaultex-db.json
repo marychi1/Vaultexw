@@ -1,0 +1,45 @@
+{
+  "users": [
+    {
+      "id": "00000000-0000-4000-8000-000000000000",
+      "phone": "555-0007",
+      "pinHash": "$2a$10$Mz2jE0qW/9vcGPrw7dPS.OCNxlUmxYmseYN7ESfMsDe4sFH3Ntt8O",
+      "walletAddress": "0xwallet-7",
+      "encryptedPrivateKey": "4e3903987015ab6a6d05d660b712f86c:ca079c92de753487c8dc1d17bfc248d1:e2962fc3a83bb932b124b40191fad264d00569",
+      "verified": true,
+      "createdAt": "2026-09-16T02:55:03.138Z",
+      "balance": 0,
+      "transactions": [],
+      "pinFailedAttempts": 0,
+      "pinLockedUntil": null,
+      "lastLogin": "2026-09-16T02:55:03.209Z"
+    }
+  ],
+  "devices": [
+    {
+      "id": "dev7",
+      "userId": "00000000-0000-4000-8000-000000000000",
+      "deviceId": "dev7",
+      "deviceName": "test",
+      "ipAddress": "::ffff:127.0.0.1",
+      "userAgent": "",
+      "authorized": true,
+      "lastActivity": "2026-09-16T02:55:03.208Z",
+      "createdAt": "2026-09-16T02:55:03.208Z"
+    }
+  ],
+  "otps": [],
+  "notifications": [
+    {
+      "id": "00000000-0000-4000-8000-000000000000",
+      "userId": "00000000-0000-4000-8000-000000000000",
+      "deviceId": "dev7",
+      "deviceName": "test",
+      "ipAddress": "::ffff:127.0.0.1",
+      "timestamp": "2026-09-16T02:55:03.209Z",
+      "read": false
+    }
+  ],
+  "webauthnChallenges": [],
+  "credentials": []
+}

@@ -1,0 +1,250 @@
+:root {
+  color-scheme: dark;
+  --bg: #07111f;
+  --bg-soft: #0f172a;
+  --panel: #111827;
+  --panel-strong: #1f2937;
+  --line: #334155;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --primary: #22c55e;
+  --primary-strong: #16a34a;
+  --secondary: #1e293b;
+  --danger: #f87171;
+  --shadow: rgba(15, 23, 42, 0.35);
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(circle at top, #0b1730 0%, var(--bg) 55%);
+  color: var(--text);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+a { color: inherit; text-decoration: none; }
+
+body {
+  min-height: 100vh;
+}
+
+.shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  background: rgba(17, 24, 39, 0.8);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 10px 30px var(--shadow);
+}
+
+.brand {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.nav {
+  display: flex;
+  gap: 14px;
+  color: var(--muted);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.nav a:hover {
+  color: var(--text);
+}
+
+.nav-button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 8px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.nav-button:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+main {
+  display: block;
+}
+
+.page-block {
+  max-width: 980px;
+  margin: 0 auto;
+  padding-top: 8px;
+}
+
+.page-block.narrow {
+  max-width: 620px;
+}
+
+.card {
+  background: rgba(17, 24, 39, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 0 10px 30px var(--shadow);
+  margin-bottom: 20px;
+}
+
+.secondary-box {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px dashed var(--line);
+}
+
+.hero-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.grid.two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.eyebrow {
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+h1, h2, h3, p {
+  margin-top: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  margin-bottom: 10px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.actions, .stacked-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.stacked-actions {
+  flex-direction: column;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  padding: 12px 18px;
+  border: 1px solid transparent;
+  font-weight: 700;
+  transition: 0.2s ease;
+  cursor: pointer;
+}
+
+.button.primary {
+  background: var(--primary);
+  color: #03130b;
+}
+
+.button.primary:hover {
+  background: var(--primary-strong);
+}
+
+.button.secondary {
+  background: var(--secondary);
+  border-color: var(--line);
+}
+
+.button.full {
+  width: 100%;
+}
+
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+}
+
+input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.9);
+  color: var(--text);
+  padding: 12px 14px;
+  font-size: 1rem;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th, .table td {
+  text-align: left;
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.72rem;
+  text-transform: capitalize;
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text);
+}
+
+.pill.completed { background: rgba(34, 197, 94, 0.14); color: #86efac; }
+.pill.pending { background: rgba(250, 204, 21, 0.12); color: #fcd34d; }
+.pill.failed { background: rgba(248, 113, 113, 0.12); color: #fca5a5; }
+
+@media (max-width: 720px) {
+  .topbar, .hero-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .grid.two-col {
+    grid-template-columns: 1fr;
+  }
+}

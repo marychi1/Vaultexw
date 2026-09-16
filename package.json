@@ -1,0 +1,19 @@
+{
+  "name": "vaultex",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend-next"
+  ],
+  "scripts": {
+    "dev:frontend": "npm --workspace=frontend-next run dev",
+    "dev:backend": "npm --workspace=backend run dev",
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "build:frontend": "npm --workspace=frontend-next run build",
+    "test:backend": "npm --workspace=backend test -- --runTestsByPath tests/auth.test.ts",
+    "install:all": "npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
