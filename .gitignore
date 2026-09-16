@@ -1,7 +1,23 @@
+# dependencies and build outputs
 node_modules
 dist
-.env
-.DS_Store
 **/node_modules
 **/dist
-**/.env
+**/.next
+**/.cache
+
+# local environment and secrets
+.env
+.env.*
+!.env.example
+
+# editor / local tooling
+.vscode/
+.venv/
+
+# runtime/generated app data
+backend/data/
+backend/logs/
+
+# OS files
+.DS_Store
