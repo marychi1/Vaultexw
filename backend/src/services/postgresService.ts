@@ -27,14 +27,6 @@ class PostgresService {
           verified BOOLEAN NOT NULL DEFAULT TRUE,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           balance NUMERIC(30, 6) NOT NULL DEFAULT 0,
-
-        CREATE TABLE IF NOT EXISTS column_webhook_events (
-          id TEXT PRIMARY KEY,
-          event_type TEXT NOT NULL,
-          transfer_id TEXT,
-          payload JSONB NOT NULL,
-          received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
           last_login TIMESTAMPTZ,
           pin_failed_attempts INTEGER NOT NULL DEFAULT 0,
           pin_locked_until TIMESTAMPTZ
@@ -100,14 +92,6 @@ class PostgresService {
         CREATE INDEX IF NOT EXISTS devices_user_id_idx ON devices(user_id);
         CREATE INDEX IF NOT EXISTS notifications_user_id_timestamp_idx ON notifications(user_id, timestamp DESC);
         CREATE INDEX IF NOT EXISTS otps_phone_expires_at_idx ON otps(phone, expires_at DESC);
-        CREATE TABLE IF NOT EXISTS column_webhook_events (
-          id TEXT PRIMARY KEY,
-          event_type TEXT NOT NULL,
-          transfer_id TEXT,
-          payload JSONB NOT NULL,
-          received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-
         CREATE INDEX IF NOT EXISTS transactions_user_id_created_at_idx ON transactions(user_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS column_webhook_events_transfer_id_idx ON column_webhook_events(transfer_id);
       `);
