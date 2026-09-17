@@ -1,0 +1,9 @@
+**/node_modules
+**/.next
+**/dist
+.venv
+.git
+.env
+backend/data
+backend/logs
+vaultex.git
