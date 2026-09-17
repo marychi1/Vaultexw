@@ -32,12 +32,12 @@ export default class WebAuthnService {
         opts.pubKeyCredParams = [{ type: 'public-key', alg: -7 }];
         opts.timeout = 60000;
 
-        Database.createWebAuthnChallenge(phone, challenge);
+        await Database.createWebAuthnChallenge(phone, challenge);
         return opts;
     }
 
     static async verifyRegistration(phone: string, attestationResponse: any) {
-        const storedChallenge = Database.getWebAuthnChallenge(phone);
+        const storedChallenge = await Database.getWebAuthnChallenge(phone);
         if (!storedChallenge) {
             throw new Error('No registration challenge found for phone');
         }
@@ -58,19 +58,19 @@ export default class WebAuthnService {
         } as any;
 
         const regResult = await f2l.attestationResult(clientAttestationResponse, expected);
-        Database.removeWebAuthnChallenge(phone);
+        await Database.removeWebAuthnChallenge(phone);
 
         const authnrData = regResult.authnrData;
         const credentialId = toBase64Url(authnrData.get('credId'));
         const publicKey = authnrData.get('credentialPublicKeyPem') || authnrData.get('credentialPublicKey');
         const counter = authnrData.get('counter') || 0;
 
-        Database.storeCredential(phone, credentialId, publicKey, counter);
+        await Database.storeCredential(phone, credentialId, publicKey, counter);
         return { registered: true };
     }
 
     static async generateAssertionOptions(phone: string) {
-        const allowCredentials = Database.getCredentialsForPhone(phone).map((c: any) => ({
+        const allowCredentials = (await Database.getCredentialsForPhone(phone)).map((c: any) => ({
             id: fromBase64Url(c.credentialId) as any,
             type: 'public-key' as const,
         }));
@@ -80,12 +80,12 @@ export default class WebAuthnService {
         opts.challenge = challengeValue as any;
         opts.allowCredentials = allowCredentials as any;
 
-        Database.createWebAuthnChallenge(phone, challenge);
+        await Database.createWebAuthnChallenge(phone, challenge);
         return opts;
     }
 
     static async verifyAssertion(phone: string, assertionResponse: any) {
-        const storedChallenge = Database.getWebAuthnChallenge(phone);
+        const storedChallenge = await Database.getWebAuthnChallenge(phone);
         if (!storedChallenge) {
             throw new Error('No assertion challenge found for phone');
         }
@@ -101,7 +101,7 @@ export default class WebAuthnService {
             },
         } as any;
 
-        const credential = Database.getCredential(phone, clientAssertionResponse.id);
+        const credential = await Database.getCredential(phone, clientAssertionResponse.id);
         if (!credential) {
             throw new Error('Unknown credential');
         }
@@ -115,8 +115,8 @@ export default class WebAuthnService {
         } as any;
 
         const result = await f2l.assertionResult(clientAssertionResponse, expected);
-        Database.updateCredentialCounter(phone, clientAssertionResponse.id, result.authnrData.get('counter'));
-        Database.removeWebAuthnChallenge(phone);
+        await Database.updateCredentialCounter(phone, clientAssertionResponse.id, result.authnrData.get('counter'));
+        await Database.removeWebAuthnChallenge(phone);
         return { authenticated: true };
     }
 }

@@ -21,3 +21,7 @@ backend/logs/
 
 # OS files
 .DS_Store
+.neon
+
+# nested repository metadata created during local setup
+vaultex.git/

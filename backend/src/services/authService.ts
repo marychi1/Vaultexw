@@ -35,8 +35,8 @@ class AuthService {
         return await bcryptjs.compare(pin, hashedPin);
     }
 
-    static registerUser(phone: string, pin: string, walletAddress?: string, encryptedPrivateKey?: string): User {
-        const existingUser = Database.getUserByPhone(phone);
+    static async registerUser(phone: string, pin: string, walletAddress?: string, encryptedPrivateKey?: string): Promise<User> {
+        const existingUser = await Database.getUserByPhone(phone);
         if (existingUser) {
             throw new Error('User already registered');
         }
@@ -58,7 +58,7 @@ class AuthService {
     }
 
     static async authenticateUser(phone: string, pin: string, deviceId: string, deviceName: string, ipAddress: string, userAgent: string): Promise<{ user: User; token: string; device: Device }> {
-        const user = Database.getUserByPhone(phone);
+        const user = await Database.getUserByPhone(phone);
         if (!user) {
             throw new Error('User not found');
         }
@@ -80,17 +80,17 @@ class AuthService {
             if (attempts >= THRESHOLD) {
                 updates.pinLockedUntil = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
             }
-            Database.updateUser(user.id, updates);
+            await Database.updateUser(user.id, updates);
             throw new Error('Invalid PIN');
         }
 
         // reset failed attempts on success
         if (user.pinFailedAttempts && user.pinFailedAttempts > 0) {
-            Database.updateUser(user.id, { pinFailedAttempts: 0, pinLockedUntil: null });
+            await Database.updateUser(user.id, { pinFailedAttempts: 0, pinLockedUntil: null });
         }
 
         // Get or create device
-        let device = Database.getDeviceById(deviceId);
+        let device = await Database.getDeviceById(deviceId);
         if (!device) {
             device = {
                 id: deviceId,
@@ -103,12 +103,12 @@ class AuthService {
                 lastActivity: new Date(),
                 createdAt: new Date(),
             };
-            Database.createDevice(device);
+            await Database.createDevice(device);
         } else {
             if (!device.authorized) {
                 throw new Error('Device access revoked');
             }
-            Database.updateDevice(deviceId, {
+            await Database.updateDevice(deviceId, {
                 lastActivity: new Date(),
             });
         }
@@ -120,7 +120,7 @@ class AuthService {
         AuditService.logEvent('user_login', { userId: user.id, deviceId, ipAddress, userAgent });
 
         // Login notification
-        Database.createNotification({
+        await Database.createNotification({
             id: uuidv4(),
             userId: user.id,
             deviceId,
@@ -131,7 +131,7 @@ class AuthService {
         });
 
         // Update user's last login
-        Database.updateUser(user.id, {
+        await Database.updateUser(user.id, {
             lastLogin: new Date(),
         });
 
@@ -139,12 +139,12 @@ class AuthService {
     }
 
     static async authenticateUserByPhone(phone: string, deviceId: string, deviceName: string, ipAddress: string, userAgent: string): Promise<{ user: User; token: string; device: Device }> {
-        const user = Database.getUserByPhone(phone);
+        const user = await Database.getUserByPhone(phone);
         if (!user) {
             throw new Error('User not found');
         }
 
-        let device = Database.getDeviceById(deviceId);
+        let device = await Database.getDeviceById(deviceId);
         if (!device) {
             device = {
                 id: deviceId,
@@ -157,18 +157,18 @@ class AuthService {
                 lastActivity: new Date(),
                 createdAt: new Date(),
             };
-            Database.createDevice(device);
+            await Database.createDevice(device);
         } else {
             if (!device.authorized) {
                 throw new Error('Device access revoked');
             }
-            Database.updateDevice(deviceId, { lastActivity: new Date() });
+            await Database.updateDevice(deviceId, { lastActivity: new Date() });
         }
 
         const token = this.generateAuthToken(user.id, deviceId);
         AuditService.logEvent('webauthn_login', { userId: user.id, deviceId, ipAddress, userAgent });
 
-        Database.createNotification({
+        await Database.createNotification({
             id: uuidv4(),
             userId: user.id,
             deviceId,
@@ -178,7 +178,7 @@ class AuthService {
             read: false,
         });
 
-        Database.updateUser(user.id, { lastLogin: new Date() });
+        await Database.updateUser(user.id, { lastLogin: new Date() });
 
         return { user, token, device };
     }

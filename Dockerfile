@@ -2,21 +2,15 @@ FROM node:24-slim
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json ./
-COPY frontend/package.json ./frontend/
+COPY package.json package-lock.json ./
+COPY frontend-next/package.json ./frontend-next/
 COPY backend/package.json ./backend/
+RUN npm ci
 
-# Install dependencies
-RUN npm install
-RUN npm --prefix frontend install
-RUN npm --prefix backend install
+COPY frontend-next ./frontend-next
+RUN npm run build:frontend
 
-# Copy source code
-COPY . .
+ENV NODE_ENV=production
+EXPOSE 3001
 
-# Expose ports
-EXPOSE 4173 4000
-
-# Run both dev servers
-CMD ["npm", "run", "dev"]
+CMD ["npm", "--workspace=frontend-next", "run", "start"]

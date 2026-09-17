@@ -77,6 +77,12 @@ npm run dev
 - Ethers.js for blockchain
 - In-memory database (easily swappable with PostgreSQL)
 
+### Neon/PostgreSQL
+
+The core Neon migration is stored at `backend/sql/001_initial_neon_schema.sql`. It contains the tables required by the current backend: users, devices, OTPs, notifications, WebAuthn credentials/challenges, and normalized wallet transactions. The current runtime remains file-backed until the repository adapter is switched to Postgres; this prevents a configuration flag from claiming database persistence before CRUD operations are migrated.
+
+The supplied product tables for virtual cards, yield positions, and token portfolios are intentionally deferred until those features have backend routes and service logic.
+
 ## Project Structure
 
 ```text
@@ -198,15 +204,24 @@ REACT_APP_ENCRYPTION_KEY=change-in-production
 
 # Backend (.env)
 JWT_SECRET=change-in-production
+ENCRYPTION_KEY=change-in-production
+DATABASE_DRIVER=postgres
+DATABASE_URL=postgresql://...
+OTP_PROVIDER=twilio
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_FROM_PHONE=+15550000000
 PORT=4000
 ```
 
+Use `OTP_PROVIDER=console` only for local development. Production must use `twilio` with all three Twilio settings configured; never commit these values.
+
 ## Blockchain Integration
 
-- **Network**: Polygon Mumbai Testnet
-- **USDT Address**: `0x1c89d6b3b2aad82f3519c5e4938e2e8976030b36`
+- **Network**: Polygon Mainnet
+- **USDT Address**: `0xc2132D05D31c914a87C6611C10748AEb04B58e8F`
 - **Decimals**: 6
-- **RPC**: `https://rpc-mumbai.maticvigil.com`
+- **RPC**: configured through `POLYGON_RPC_URL`
 
 Get test MATIC for gas fees: <https://faucet.polygon.technology/>
 
