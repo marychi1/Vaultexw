@@ -34,8 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                         </div>
                         <nav className="nav">
                             <Link href="/">Home</Link>
-                            {!signedIn && <Link href="/login">Login</Link>}
-                            {!signedIn && <Link href="/signup">Sign up</Link>}
+                            {!signedIn && <Link href="/contact">Contact</Link>}
                             {signedIn && <Link href="/dashboard">Dashboard</Link>}
                             {signedIn && <Link href="/send">Send</Link>}
                             {signedIn && <Link href="/receive">Receive</Link>}

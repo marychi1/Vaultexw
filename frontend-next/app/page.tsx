@@ -8,12 +8,12 @@ export default function HomePage() {
                         Manage your digital assets with <span className="highlight">confidence.</span>
                     </h1>
                     <p>
-                        Vaultex brings together secure wallet access, OTP verification, PIN protection,
-                        and frictionless transfers in a premium digital finance experience.
+                        A secure digital wallet experience for people and businesses moving value with
+                        clarity, control, and confidence.
                     </p>
                     <div className="actions">
-                        <a href="/signup" className="button primary">Create wallet</a>
-                        <a href="/login" className="button secondary">Login</a>
+                        <a href="#platform" className="button primary">Explore Vaultex</a>
+                        <a href="/contact" className="button secondary">Contact us</a>
                     </div>
                 </div>
 
@@ -97,7 +97,7 @@ export default function HomePage() {
                 </div>
             </div>
 
-            <div className="grid two-col">
+            <div className="grid two-col" id="platform">
                 <div className="feature-card">
                     <div className="eyebrow-title">Why Vaultex</div>
                     <h2>Built for secure, everyday finance.</h2>
@@ -106,9 +106,9 @@ export default function HomePage() {
                         control, or clarity.
                     </p>
                     <ul className="feature-list">
-                        <li>OTP and PIN-based protection for sign-in and transfers</li>
-                        <li>Fast wallet access with clear balance visibility</li>
-                        <li>Transfer flows ready for extension into broader financial tools</li>
+                        <li>Security designed into every interaction</li>
+                        <li>Clear visibility across balances and movement</li>
+                        <li>Infrastructure ready for the next generation of finance</li>
                     </ul>
                 </div>
 
@@ -122,7 +122,7 @@ export default function HomePage() {
                     <ul className="feature-list">
                         <li>High-contrast dark mode with premium cyan and violet accents</li>
                         <li>Clear typography system built for wallet data and value displays</li>
-                        <li>App-ready foundation for dashboard, send, receive, and onboarding flows</li>
+                        <li>App-ready foundation for secure financial workflows</li>
                     </ul>
                 </div>
             </div>
@@ -164,20 +164,19 @@ export default function HomePage() {
                         platform without breaking the user experience.
                     </p>
                     <div className="cta-mini">
-                        <strong>Ready to launch</strong>
-                        <a href="/signup" className="button primary">Get started</a>
+                        <strong>Let&apos;s build what&apos;s next</strong>
+                        <a href="/contact" className="button primary">Start a conversation</a>
                     </div>
                 </div>
             </section>
 
             <section className="bottom-cta">
                 <div>
-                    <div className="eyebrow-title">Start now</div>
-                    <h2>Build your next secure wallet experience with Vaultex.</h2>
+                    <div className="eyebrow-title">Work with Vaultex</div>
+                    <h2>Bring a more secure financial future into focus.</h2>
                 </div>
                 <div className="bottom-actions">
-                    <a href="/signup" className="button primary">Create account</a>
-                    <a href="/login" className="button secondary">Access wallet</a>
+                    <a href="/contact" className="button primary">Contact us</a>
                 </div>
             </section>
 
@@ -187,11 +186,10 @@ export default function HomePage() {
                     <span>VAULTEX</span>
                 </div>
                 <div className="footer-links">
-                    <a href="/signup">Create wallet</a>
-                    <a href="/login">Login</a>
-                    <a href="/dashboard">Dashboard</a>
+                    <a href="#platform">Platform</a>
+                    <a href="/contact">Contact</a>
                 </div>
-                <div className="footer-meta">Protected by wallet-grade security</div>
+                <div className="footer-meta">Digital finance, with intention.</div>
             </footer>
         </main>
     );

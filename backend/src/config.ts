@@ -52,7 +52,7 @@ export function getBackendConfig(): BackendConfig {
     const maxDailyTransferUsdt = Math.max(0, Number(process.env.MAX_DAILY_TRANSFER_USDT || 1000));
     const corsOrigins = (process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean))
         || (nodeEnv === 'production' ? [] : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173']);
-    const otpProvider = (process.env.OTP_PROVIDER || (nodeEnv === 'production' ? 'twilio' : 'console')).toLowerCase() === 'twilio' ? 'twilio' : 'console';
+    const otpProvider = (process.env.OTP_PROVIDER || 'console').toLowerCase() === 'twilio' ? 'twilio' : 'console';
     const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID?.trim() || undefined;
     const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN?.trim() || undefined;
     const twilioFromPhone = process.env.TWILIO_FROM_PHONE?.trim() || undefined;
