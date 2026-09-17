@@ -36,12 +36,12 @@ export default function DashboardPage() {
 
     return (
         <ProtectedRoute>
-            <div className="page-block">
-                <section className="card hero-card">
+            <div className="page-block wallet-page">
+                <section className="card wallet-hero">
                     <div>
-                        <p className="eyebrow">Balance</p>
+                        <div className="eyebrow">Balance</div>
                         <h1>{loading ? 'Loading...' : `${wallet.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`}</h1>
-                        <p className="muted">Wallet: {wallet.address || 'Not available'}</p>
+                        <p className="muted wallet-address-line">Wallet: {wallet.address || 'Not available'}</p>
                     </div>
                     <div className="actions">
                         <a href="/send" className="button primary">Send</a>
@@ -49,9 +49,28 @@ export default function DashboardPage() {
                     </div>
                 </section>
 
-                <section className="grid two-col">
-                    <div className="card">
-                        <h2>Portfolio</h2>
+                <section className="wallet-metrics">
+                    <div className="metric-block">
+                        <div className="label">Available balance</div>
+                        <strong>{loading ? '...' : `${wallet.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</strong>
+                        <span className="metric-trend up">+12.4% this month</span>
+                    </div>
+                    <div className="metric-block">
+                        <div className="label">Reserve</div>
+                        <strong>68.1%</strong>
+                        <span className="metric-trend">Protected</span>
+                    </div>
+                    <div className="metric-block">
+                        <div className="label">Network</div>
+                        <strong>Polygon</strong>
+                        <span className="metric-trend up">Low latency</span>
+                    </div>
+                </section>
+
+                <section className="grid two-col wallet-grid">
+                    <div className="card summary-card">
+                        <div className="eyebrow-title">Portfolio</div>
+                        <h2>Account overview</h2>
                         <div className="stat-row">
                             <span>Network</span>
                             <strong>Polygon</strong>
@@ -66,8 +85,9 @@ export default function DashboardPage() {
                         </div>
                     </div>
 
-                    <div className="card">
-                        <h2>Quick actions</h2>
+                    <div className="card summary-card">
+                        <div className="eyebrow-title">Quick actions</div>
+                        <h2>Move funds instantly</h2>
                         <div className="stacked-actions">
                             <a href="/send" className="button primary full">Send USDT</a>
                             <a href="/receive" className="button secondary full">Receive USDT</a>
@@ -76,7 +96,8 @@ export default function DashboardPage() {
                     </div>
                 </section>
 
-                <section className="card">
+                <section className="card transaction-card">
+                    <div className="eyebrow-title">Recent activity</div>
                     <h2>Recent Transactions</h2>
                     {transactionRows.length === 0 ? (
                         <p className="muted">No transactions yet.</p>

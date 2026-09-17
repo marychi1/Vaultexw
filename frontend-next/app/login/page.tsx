@@ -42,10 +42,12 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="page-block narrow">
-            <section className="card">
-                <p className="eyebrow">Welcome back</p>
-                <h1>Login to Vaultex</h1>
+        <div className="page-block narrow auth-shell">
+            <section className="auth-card card">
+                <div className="auth-header">
+                    <div className="eyebrow">Welcome back</div>
+                    <h1>Login to Vaultex</h1>
+                </div>
 
                 <form onSubmit={handleSubmit} className="form-stack">
                     <label>
@@ -62,11 +64,11 @@ export default function LoginPage() {
                         {loading ? 'Signing in...' : 'Sign in'}
                     </button>
 
-                    <p className="muted">
+                    <p className="muted auth-link-row">
                         Need an account? <a href="/signup">Create one</a>
                     </p>
 
-                    {message && <p className="muted">{message}</p>}
+                    {message && <p className="status-message">{message}</p>}
                 </form>
             </section>
         </div>

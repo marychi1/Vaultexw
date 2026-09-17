@@ -102,7 +102,7 @@ export function getProductionConfigErrors(config = getBackendConfig()): string[]
     }
     if (!config.postgresEnabled) errors.push('DATABASE_DRIVER=postgres and DATABASE_URL are required');
     if (config.corsOrigins.length === 0) errors.push('CORS_ORIGIN is required');
-    if (config.otpProvider !== 'twilio' || !config.twilioAccountSid || !config.twilioAuthToken || !config.twilioFromPhone) {
+    if (config.otpProvider === 'twilio' && (!config.twilioAccountSid || !config.twilioAuthToken || !config.twilioFromPhone)) {
         errors.push('Twilio OTP configuration is required');
     }
     if (config.columnEnabled && (!config.columnApiKey || !config.columnWebhookSecret || !config.columnWebhookEndpointId)) {

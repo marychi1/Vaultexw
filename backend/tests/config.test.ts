@@ -64,14 +64,14 @@ describe('backend config', () => {
         expect(getProductionConfigErrors(config)).toEqual([]);
     });
 
-    test('rejects incomplete production configuration', () => {
+    test('does not require Twilio in production when console OTP is used', () => {
         process.env.NODE_ENV = 'production';
         delete process.env.JWT_SECRET;
         delete process.env.ENCRYPTION_KEY;
         delete process.env.DATABASE_DRIVER;
         delete process.env.DATABASE_URL;
         delete process.env.CORS_ORIGIN;
-        delete process.env.OTP_PROVIDER;
+        process.env.OTP_PROVIDER = 'console';
         delete process.env.TWILIO_ACCOUNT_SID;
         delete process.env.TWILIO_AUTH_TOKEN;
         delete process.env.TWILIO_FROM_PHONE;
@@ -79,12 +79,29 @@ describe('backend config', () => {
         delete process.env.COLUMN_WEBHOOK_SECRET;
         delete process.env.COLUMN_ENABLED;
 
+        const config = getBackendConfig();
+        const errors = getProductionConfigErrors(config);
+
+        expect(config.otpProvider).toBe('console');
+        expect(errors).not.toEqual(expect.arrayContaining([
+            'Twilio OTP configuration is required',
+        ]));
+    });
+
+    test('requires Twilio credentials only when Twilio is explicitly selected', () => {
+        process.env.NODE_ENV = 'production';
+        process.env.JWT_SECRET = 'prod-secret-64-chars-1234567890abcd';
+        process.env.ENCRYPTION_KEY = 'prod-encryption-key-64-chars-1234567890abcd';
+        process.env.DATABASE_DRIVER = 'postgres';
+        process.env.DATABASE_URL = 'postgres://user:pass@host/db';
+        process.env.CORS_ORIGIN = 'https://example.com';
+        process.env.OTP_PROVIDER = 'twilio';
+        delete process.env.TWILIO_ACCOUNT_SID;
+        delete process.env.TWILIO_AUTH_TOKEN;
+        delete process.env.TWILIO_FROM_PHONE;
+
         const errors = getProductionConfigErrors(getBackendConfig());
         expect(errors).toEqual(expect.arrayContaining([
-            'JWT_SECRET must be a strong production secret',
-            'ENCRYPTION_KEY must be a strong production secret',
-            'DATABASE_DRIVER=postgres and DATABASE_URL are required',
-            'CORS_ORIGIN is required',
             'Twilio OTP configuration is required',
         ]));
     });

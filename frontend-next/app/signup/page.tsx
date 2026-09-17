@@ -77,10 +77,12 @@ export default function SignUpPage() {
     };
 
     return (
-        <div className="page-block narrow">
-            <section className="card">
-                <p className="eyebrow">Create account</p>
-                <h1>Create your wallet</h1>
+        <div className="page-block narrow auth-shell">
+            <section className="auth-card card">
+                <div className="auth-header">
+                    <div className="eyebrow">Create account</div>
+                    <h1>Create your wallet</h1>
+                </div>
 
                 <div className="form-stack">
                     {step === 'phone' && (
@@ -125,7 +127,7 @@ export default function SignUpPage() {
                         </form>
                     )}
 
-                    {message && <p className="muted">{message}</p>}
+                    {message && <p className="status-message">{message}</p>}
                 </div>
             </section>
         </div>

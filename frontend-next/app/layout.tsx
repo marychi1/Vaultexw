@@ -28,7 +28,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <body>
                 <div className="shell">
                     <header className="topbar">
-                        <div className="brand">Vaultex</div>
+                        <div className="brand" aria-label="Vaultex home">
+                            <span className="brand-mark" aria-hidden="true" />
+                            <span className="brand-text">V<span>AULT</span>EX</span>
+                        </div>
                         <nav className="nav">
                             <Link href="/">Home</Link>
                             {!signedIn && <Link href="/login">Login</Link>}

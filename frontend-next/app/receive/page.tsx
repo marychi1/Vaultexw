@@ -23,10 +23,12 @@ export default function ReceivePage() {
 
     return (
         <ProtectedRoute>
-            <div className="page-block narrow">
-                <section className="card">
-                    <p className="eyebrow">Receive funds</p>
-                    <h1>Wallet address</h1>
+            <div className="page-block narrow auth-shell">
+                <section className="auth-card card">
+                    <div className="auth-header">
+                        <div className="eyebrow">Receive funds</div>
+                        <h1>Wallet address</h1>
+                    </div>
 
                     <div className="form-stack">
                         <label>
@@ -34,9 +36,9 @@ export default function ReceivePage() {
                             <input value={wallet.address || ''} readOnly />
                         </label>
 
-                        <div className="card secondary-box">
+                        <div className="secondary-box receive-box">
                             <p className="muted">Share this address to receive USDT on Polygon.</p>
-                            <p><strong>{wallet.address || 'Address unavailable'}</strong></p>
+                            <p className="address-display"><strong>{wallet.address || 'Address unavailable'}</strong></p>
                         </div>
 
                         <a href="/dashboard" className="button primary full">Back to dashboard</a>

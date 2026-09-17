@@ -43,10 +43,12 @@ export default function SendPage() {
 
     return (
         <ProtectedRoute>
-            <div className="page-block narrow">
-                <section className="card">
-                    <p className="eyebrow">Send funds</p>
-                    <h1>Send USDT</h1>
+            <div className="page-block narrow auth-shell">
+                <section className="auth-card card">
+                    <div className="auth-header">
+                        <div className="eyebrow">Send funds</div>
+                        <h1>Send USDT</h1>
+                    </div>
 
                     <form onSubmit={handleSubmit} className="form-stack">
                         <label>
@@ -68,7 +70,7 @@ export default function SendPage() {
                             {sending ? 'Sending...' : 'Confirm transfer'}
                         </button>
 
-                        {status && <p className="muted">{status}</p>}
+                        {status && <p className="status-message">{status}</p>}
                     </form>
                 </section>
             </div>
