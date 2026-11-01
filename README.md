@@ -34,7 +34,7 @@ The startup schema includes the nullable-wallet change. The same change is docum
 
 The root `render.yaml` defines an isolated staging service with a separately configured PostgreSQL URL. Keep `COLUMN_ENABLED=false` and `COLUMN_LIVE_WIRES_ENABLED=false`. The staging API can validate startup, database readiness, authentication, and transfer tracking, but it must not submit live wires.
 
-Configure `DATABASE_URL`, `JWT_SECRET`, `SUPABASE_URL`, and `SUPABASE_ANON_KEY` privately in Render. Configure Twilio OTP for phone verification; console OTP is not supported for customer account linking outside automated tests. Keep `ENCRYPTION_KEY` protected while legacy encrypted wallet records remain in the database. Do not put credentials in this repository or chat.
+Configure `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_PHONE` privately in the Render staging service. The blueprint selects Twilio OTP because console OTP is not supported for customer account linking outside automated tests. Do not deploy the staging service until its required values have been entered. Use sandbox/test identities and phone numbers you control; never put credentials in this repository or chat.
 
 ### Pull request preview databases
 
