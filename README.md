@@ -91,6 +91,32 @@ Keep `COLUMN_LIVE_WIRES_ENABLED=false` in development and staging unless Column 
 
 Receipts use a customer-facing Vaultex reference and show only recipient display name, amount, rail, and provider status. They omit Column transfer IDs, idempotency keys, bank-account/counterparty IDs, and raw provider payload fields such as IMAD/OMAD. Do not display current account balance on a recipient receipt. Only show a bank logo or account suffix when sourced from a verified institution/counterparty record; the current wire API does not provide verified branding or recipient account details. A provider-completed wire status is not proof of recipient-bank posting.
 
+### Staging deployment
+
+The root `render.yaml` defines a blueprint for a separate, free Render staging
+API. It uses `NODE_ENV=staging`, PostgreSQL, and explicitly disables Column
+and live wires.
+Create a **new staging database**, such as a separate Neon project; never point
+staging at the production database. Render's free Postgres databases expire
+after 30 days and do not support backups, so they are not suitable for staging
+([Render free-tier limits](https://render.com/docs/free#free-postgres-instances)).
+
+When creating the Blueprint in Render, provide `DATABASE_URL`, `JWT_SECRET`,
+and `ENCRYPTION_KEY` directly in Render's environment settings.
+Use staging-only database credentials and independently generated secrets at
+least 64 characters long. Do not put secret values in this repository or chat.
+Keep `COLUMN_ENABLED=false` and `COLUMN_LIVE_WIRES_ENABLED=false` until Column
+confirms the sandbox API endpoint and sandbox credentials are configured only
+in the staging service.
+
+The staging environment can validate startup, database readiness, and
+read-only health checks. The current wire-submission gate intentionally rejects
+wire submissions outside production, so a Column sandbox transfer cannot be
+sent from staging until a separate, explicitly sandbox-only submission gate is
+implemented and tested. Never turn on the production live-wire setting to work
+around this restriction. Free Render services can sleep when idle; do not treat
+them as production or as proof of dependable webhook delivery.
+
 ## Project Structure
 
 ```text

@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: vaultexw-api-staging
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: staging
+      - key: DATABASE_DRIVER
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: ALLOW_MAINNET_TRANSFERS
+        value: "false"
+      - key: COLUMN_ENABLED
+        value: "false"
+      - key: COLUMN_LIVE_WIRES_ENABLED
+        value: "false"
+      - key: OTP_PROVIDER
+        value: console
