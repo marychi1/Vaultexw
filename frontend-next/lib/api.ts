@@ -43,15 +43,13 @@ export async function loginUser(phone: string, pin: string, deviceName = 'Web Br
     return data;
 }
 
-export async function signupUser(phone: string, pin: string, walletAddress: string, encryptedPrivateKey: string) {
+export async function signupUser(phone: string, pin: string) {
     const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             phone,
             pin,
-            walletAddress,
-            encryptedPrivateKey,
             deviceId: `next-${Date.now()}`,
             deviceName: 'Web Browser',
         }),

@@ -7,10 +7,10 @@ import { requestOtp, verifyOtp, signupUser } from '@/lib/api';
 
 export default function SignUpPage() {
     const router = useRouter();
-    const [phone, setPhone] = useState('+1 555 123 4567');
+    const [phone, setPhone] = useState('');
     const [otp, setOtp] = useState('');
-    const [pin, setPin] = useState('1234');
-    const [confirmPin, setConfirmPin] = useState('1234');
+    const [pin, setPin] = useState('');
+    const [confirmPin, setConfirmPin] = useState('');
     const [step, setStep] = useState<'phone' | 'otp' | 'pin'>('phone');
     const [message, setMessage] = useState('');
     const [loading, setLoading] = useState(false);
@@ -62,11 +62,9 @@ export default function SignUpPage() {
 
         try {
             setLoading(true);
-            const walletAddress = '0x1c89d6b3b2aad82f3519c5e4938e2e8976030b36';
-            const encryptedPrivateKey = 'demo-encrypted-key';
-            const result = await signupUser(phone, pin, walletAddress, encryptedPrivateKey);
+            const result = await signupUser(phone, pin);
             localStorage.setItem('vaultex-token', result.token);
-            localStorage.setItem('vaultex-user', JSON.stringify({ phone, walletAddress }));
+            localStorage.setItem('vaultex-user', JSON.stringify({ phone, walletAddress: result.user.walletAddress }));
             setMessage('Account created successfully!');
             window.location.href = '/dashboard';
         } catch (error) {

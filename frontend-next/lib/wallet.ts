@@ -6,6 +6,8 @@ export type WalletTransaction = {
     amount: number;
     date: string;
     status: 'completed' | 'pending' | 'failed';
+    reference?: string;
+    recipient?: string;
 };
 
 export type WalletState = {
@@ -94,6 +96,8 @@ export async function hydrateWalletFromBackend(): Promise<WalletState> {
                 amount: Number(tx.amount ?? 0),
                 date: tx.date ?? new Date().toISOString().slice(0, 10),
                 status: tx.status ?? 'completed',
+                reference: typeof tx.reference === 'string' ? tx.reference : undefined,
+                recipient: typeof tx.recipient === 'string' ? tx.recipient : undefined,
             })) : [],
         };
 

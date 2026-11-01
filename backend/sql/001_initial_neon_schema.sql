@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   type TEXT NOT NULL CHECK (type IN ('deposit', 'transfer', 'withdrawal')),
   amount NUMERIC(30, 6) NOT NULL CHECK (amount >= 0),
   tx_hash TEXT,
+  recipient_address TEXT,
   status TEXT NOT NULL CHECK (status IN ('completed', 'pending', 'failed')),
   chain TEXT NOT NULL DEFAULT 'polygon',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -78,11 +79,43 @@ CREATE TABLE IF NOT EXISTS column_webhook_events (
   event_type TEXT NOT NULL,
   transfer_id TEXT,
   payload JSONB NOT NULL,
-  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  processed_at TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS column_wire_transfers (
+  idempotency_key TEXT PRIMARY KEY,
+  reference TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  transfer_id TEXT UNIQUE,
+  amount_cents BIGINT NOT NULL CHECK (amount_cents > 0),
+  currency_code TEXT NOT NULL CHECK (currency_code = 'USD'),
+  recipient_name TEXT NOT NULL,
+  bank_account_id TEXT NOT NULL,
+  counterparty_id TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,
+  last_error_code TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_reconciled_at TIMESTAMPTZ
+);
+
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS recipient_address TEXT;
+ALTER TABLE column_wire_transfers ADD COLUMN IF NOT EXISTS reference TEXT;
+ALTER TABLE column_wire_transfers ADD COLUMN IF NOT EXISTS recipient_name TEXT;
+UPDATE column_wire_transfers
+  SET reference = 'VTX-' || UPPER(SUBSTRING(MD5(random()::text || clock_timestamp()::text) FROM 1 FOR 16))
+  WHERE reference IS NULL;
+UPDATE column_wire_transfers SET recipient_name = 'Recipient' WHERE recipient_name IS NULL;
+ALTER TABLE column_wire_transfers ALTER COLUMN reference SET NOT NULL;
+ALTER TABLE column_wire_transfers ALTER COLUMN recipient_name SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS devices_user_id_idx ON devices(user_id);
 CREATE INDEX IF NOT EXISTS notifications_user_id_timestamp_idx ON notifications(user_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS otps_phone_expires_at_idx ON otps(phone, expires_at DESC);
 CREATE INDEX IF NOT EXISTS transactions_user_id_created_at_idx ON transactions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS column_webhook_events_transfer_id_idx ON column_webhook_events(transfer_id);
+CREATE INDEX IF NOT EXISTS column_wire_transfers_user_created_idx ON column_wire_transfers(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS column_wire_transfers_status_idx ON column_wire_transfers(status);
+CREATE UNIQUE INDEX IF NOT EXISTS column_wire_transfers_reference_idx ON column_wire_transfers(reference);

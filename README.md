@@ -79,9 +79,17 @@ npm run dev
 
 ### Neon/PostgreSQL
 
-The core Neon migration is stored at `backend/sql/001_initial_neon_schema.sql`. It contains the tables required by the current backend: users, devices, OTPs, notifications, WebAuthn credentials/challenges, and normalized wallet transactions. The current runtime remains file-backed until the repository adapter is switched to Postgres; this prevents a configuration flag from claiming database persistence before CRUD operations are migrated.
+The backend can use PostgreSQL when `DATABASE_DRIVER=postgres` and `DATABASE_URL` are configured. Startup initializes and checks the runtime schema; the core migration is also stored at `backend/sql/001_initial_neon_schema.sql`. Keep a verified database backup before production schema changes.
 
 The supplied product tables for virtual cards, yield positions, and token portfolios are intentionally deferred until those features have backend routes and service logic.
+
+### Column wires and webhook tracking
+
+Live wire submission is disabled unless `COLUMN_LIVE_WIRES_ENABLED=true` is set in production. It also requires Column and PostgreSQL to be configured. Each request is persisted by user and `Idempotency-Key` before the upstream submission; reusing a key with different request details returns a conflict. Wire status is updated from deduplicated Column webhook events and refreshed from Column when an authorized user looks up their tracked transfer. These provider statuses are not independent confirmation that the recipient bank credited the funds. Webhook delivery failures return an error so Column can retry; monitor Column's delivery dashboard and the backend health endpoint after configuration.
+
+Keep `COLUMN_LIVE_WIRES_ENABLED=false` in development and staging unless Column explicitly provides a sandbox with non-production credentials and endpoints. Do not enable production wires until credentials are rotated, the production database has a verified backup and restore, and signed webhook deliveries have succeeded.
+
+Receipts use a customer-facing Vaultex reference and show only recipient display name, amount, rail, and provider status. They omit Column transfer IDs, idempotency keys, bank-account/counterparty IDs, and raw provider payload fields such as IMAD/OMAD. Do not display current account balance on a recipient receipt. Only show a bank logo or account suffix when sourced from a verified institution/counterparty record; the current wire API does not provide verified branding or recipient account details. A provider-completed wire status is not proof of recipient-bank posting.
 
 ## Project Structure
 

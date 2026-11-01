@@ -866,6 +866,234 @@ p {
     border: 1px solid rgba(0, 240, 255, 0.18);
 }
 
+.receipt {
+    display: grid;
+    gap: 20px;
+}
+
+.receipt-status {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid rgba(0, 229, 160, 0.28);
+    border-radius: 14px;
+    background: rgba(0, 229, 160, 0.07);
+}
+
+.receipt-status > span {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+    border-radius: 50%;
+    background: rgba(0, 229, 160, 0.16);
+    color: var(--mint);
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.receipt-status strong,
+.receipt-status small {
+    display: block;
+}
+
+.receipt-status strong {
+    color: var(--mint);
+    text-transform: capitalize;
+}
+
+.receipt-status small {
+    margin-top: 4px;
+    color: var(--text2);
+}
+
+.receipt-status.pending {
+    border-color: rgba(255, 140, 66, 0.3);
+    background: rgba(255, 140, 66, 0.07);
+}
+
+.receipt-status.pending > span,
+.receipt-status.pending strong {
+    color: var(--orange);
+}
+
+.receipt-status.failed {
+    border-color: rgba(255, 59, 92, 0.3);
+    background: rgba(255, 59, 92, 0.07);
+}
+
+.receipt-status.failed > span,
+.receipt-status.failed strong {
+    color: var(--red);
+}
+
+.transfer-progress {
+    display: grid;
+    gap: 0;
+    margin: 0;
+    padding: 2px 6px;
+    list-style: none;
+}
+
+.transfer-progress li {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    min-height: 64px;
+    color: var(--muted2);
+}
+
+.transfer-progress li:not(:last-child)::after {
+    position: absolute;
+    top: 30px;
+    bottom: 0;
+    left: 14px;
+    width: 2px;
+    background: var(--border2);
+    content: '';
+}
+
+.transfer-progress li.complete:not(:last-child)::after {
+    background: var(--mint);
+}
+
+.progress-marker {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    border: 2px solid var(--border2);
+    border-radius: 50%;
+    background: var(--panel2);
+    color: var(--muted2);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.transfer-progress li.complete .progress-marker {
+    border-color: var(--mint);
+    background: var(--mint);
+    color: var(--ink);
+}
+
+.transfer-progress li.current .progress-marker {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    box-shadow: 0 0 0 4px rgba(0, 240, 255, 0.1);
+}
+
+.transfer-progress li.failed .progress-marker {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+.progress-copy {
+    display: grid;
+    gap: 3px;
+    padding: 1px 0 12px;
+}
+
+.progress-copy strong {
+    color: var(--text2);
+    font-size: 0.92rem;
+}
+
+.transfer-progress li.complete .progress-copy strong {
+    color: var(--text);
+}
+
+.transfer-progress li.current .progress-copy strong {
+    color: var(--cyan);
+}
+
+.transfer-progress li.failed .progress-copy strong {
+    color: var(--red);
+}
+
+.progress-copy small {
+    color: var(--muted2);
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.receipt-amount {
+    color: #fff;
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(2rem, 6vw, 3rem);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    text-align: center;
+}
+
+.receipt-details {
+    display: grid;
+    gap: 0;
+    margin: 0;
+    padding: 0 16px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: rgba(6, 10, 18, 0.35);
+}
+
+.receipt-details > div {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    padding: 14px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.receipt-details > div:last-child {
+    border-bottom: 0;
+}
+
+.receipt-details dt {
+    color: var(--muted2);
+    font-size: 0.9rem;
+}
+
+.receipt-details dd {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.82rem;
+    text-align: right;
+}
+
+.copy-button {
+    padding: 5px 8px;
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    background: var(--panel2);
+    color: var(--cyan);
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.receipt-note {
+    margin: 0;
+    color: var(--muted2);
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+.receipt-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
 .receive-box {
     padding: 18px 16px;
     border-radius: 16px;
@@ -1026,6 +1254,53 @@ p {
 @media (max-width: 720px) {
     .shell {
         padding: 18px 14px 28px;
+    }
+
+    @media print {
+        :root {
+            color-scheme: light;
+            --text: #111827;
+            --text2: #374151;
+            --muted2: #4b5563;
+            --border: #d1d5db;
+            --border2: #9ca3af;
+        }
+
+        html,
+        body {
+            background: #fff !important;
+            color: #111827 !important;
+        }
+
+        .topbar,
+        .receipt-actions {
+            display: none !important;
+        }
+
+        .shell,
+        .page-block.narrow {
+            width: 100%;
+            max-width: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .auth-card,
+        .receipt-details {
+            border: 1px solid #d1d5db !important;
+            background: #fff !important;
+            box-shadow: none !important;
+        }
+
+        .receipt-amount,
+        .receipt-details dd {
+            color: #111827 !important;
+        }
+
+        .receipt-status {
+            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact;
+        }
     }
 
     .topbar {
