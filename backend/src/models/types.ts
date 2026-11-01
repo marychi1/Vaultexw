@@ -12,8 +12,8 @@ export interface User {
     id: string;
     phone: string;
     pinHash: string; // Hashed PIN
-    walletAddress: string;
-    encryptedPrivateKey: string; // Encrypted private key
+    walletAddress: string | null;
+    encryptedPrivateKey: string | null;
     verified: boolean;
     createdAt: Date;
     balance: number;

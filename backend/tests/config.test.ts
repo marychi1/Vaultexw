@@ -12,8 +12,6 @@ describe('backend config', () => {
         delete process.env.COLUMN_LIVE_WIRES_ENABLED;
         process.env.JWT_SECRET = 'prod-secret';
         process.env.ENCRYPTION_KEY = '12345678901234567890123456789012';
-        process.env.POLYGON_RPC_URL = 'https://rpc.example.com';
-        process.env.USDT_CONTRACT_ADDRESS = '0xabc';
         process.env.SUPABASE_URL = 'https://project.supabase.co';
         process.env.SUPABASE_ANON_KEY = 'anon-key';
         process.env.DATABASE_DRIVER = 'postgres';
@@ -24,15 +22,11 @@ describe('backend config', () => {
 
         expect(config.jwtSecret).toBe('prod-secret');
         expect(config.encryptionKey).toBe('12345678901234567890123456789012');
-        expect(config.polygonRpcUrl).toBe('https://rpc.example.com');
-        expect(config.usdtContractAddress).toBe('0xabc');
         expect(config.supabaseUrl).toBe('https://project.supabase.co');
         expect(config.supabaseEnabled).toBe(true);
         expect(config.databaseDriver).toBe('postgres');
         expect(config.databaseUrl).toBe('postgres://user:pass@host/db');
         expect(config.postgresEnabled).toBe(true);
-        expect(config.allowMainnetTransfers).toBe(false);
-        expect(config.maxDailyTransferUsdt).toBe(1000);
         expect(config.corsOrigins).toEqual([]);
         expect(config.otpProvider).toBe('twilio');
         expect(config.columnBaseUrl).toBe('https://api.column.com');
@@ -44,8 +38,6 @@ describe('backend config', () => {
         delete process.env.COLUMN_LIVE_WIRES_ENABLED;
         delete process.env.JWT_SECRET;
         delete process.env.ENCRYPTION_KEY;
-        delete process.env.POLYGON_RPC_URL;
-        delete process.env.USDT_CONTRACT_ADDRESS;
         delete process.env.SUPABASE_URL;
         delete process.env.SUPABASE_ANON_KEY;
         delete process.env.DATABASE_DRIVER;
@@ -55,12 +47,9 @@ describe('backend config', () => {
 
         expect(config.jwtSecret).toMatch(/dev|local/i);
         expect(config.encryptionKey.length).toBeGreaterThanOrEqual(32);
-        expect(config.polygonRpcUrl).toMatch(/mumbai|localhost|rpc/i);
         expect(config.supabaseEnabled).toBe(false);
         expect(config.databaseDriver).toBe('file');
         expect(config.postgresEnabled).toBe(false);
-        expect(config.allowMainnetTransfers).toBe(false);
-        expect(config.maxDailyTransferUsdt).toBe(1000);
         expect(config.corsOrigins).toEqual(['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173']);
         expect(config.otpProvider).toBe('console');
         expect(getProductionConfigErrors(config)).toEqual([]);

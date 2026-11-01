@@ -3,7 +3,7 @@
 import './globals.css';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { isSignedIn } from '@/lib/wallet';
+import { isSignedIn } from '@/lib/auth';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     const [signedIn, setSignedIn] = useState(false);
@@ -18,7 +18,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     const signOut = () => {
         localStorage.removeItem('vaultex-token');
         localStorage.removeItem('vaultex-user');
-        localStorage.removeItem('vaultex-wallet');
         setSignedIn(false);
         window.location.href = '/login';
     };
@@ -36,8 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                             <Link href="/">Home</Link>
                             {!signedIn && <Link href="/contact">Contact</Link>}
                             {signedIn && <Link href="/dashboard">Dashboard</Link>}
-                            {signedIn && <Link href="/send">Send</Link>}
-                            {signedIn && <Link href="/receive">Receive</Link>}
+                            <Link href="/wire-transfers">Bank wires</Link>
                             {signedIn && <button type="button" className="nav-button" onClick={signOut}>Sign out</button>}
                         </nav>
                     </header>

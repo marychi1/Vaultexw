@@ -9,6 +9,7 @@
     "dev:frontend": "npm --workspace=frontend-next run dev",
     "dev:backend": "npm --workspace=backend run dev",
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "build": "npm run build:frontend && npm --workspace=backend run build",
     "build:frontend": "npm --workspace=frontend-next run build",
     "test:backend": "npm --workspace=backend test -- --runTestsByPath tests/auth.test.ts",
     "install:all": "npm install"

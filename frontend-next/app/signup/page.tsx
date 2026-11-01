@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isSignedIn } from '@/lib/wallet';
+import { isSignedIn } from '@/lib/auth';
 import { requestOtp, verifyOtp, signupUser } from '@/lib/api';
 
 export default function SignUpPage() {
@@ -64,7 +64,7 @@ export default function SignUpPage() {
             setLoading(true);
             const result = await signupUser(phone, pin);
             localStorage.setItem('vaultex-token', result.token);
-            localStorage.setItem('vaultex-user', JSON.stringify({ phone, walletAddress: result.user.walletAddress }));
+            localStorage.setItem('vaultex-user', JSON.stringify({ id: result.user.id, phone }));
             setMessage('Account created successfully!');
             window.location.href = '/dashboard';
         } catch (error) {
@@ -79,7 +79,7 @@ export default function SignUpPage() {
             <section className="auth-card card">
                 <div className="auth-header">
                     <div className="eyebrow">Create account</div>
-                    <h1>Create your wallet</h1>
+                    <h1>Create your account</h1>
                 </div>
 
                 <div className="form-stack">
@@ -120,7 +120,7 @@ export default function SignUpPage() {
                             </label>
 
                             <button className="button primary full" type="submit" disabled={loading}>
-                                {loading ? 'Creating...' : 'Create wallet'}
+                                {loading ? 'Creating...' : 'Create account'}
                             </button>
                         </form>
                     )}

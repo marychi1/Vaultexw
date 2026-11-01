@@ -2,7 +2,7 @@
 
 import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isSignedIn } from '@/lib/wallet';
+import { isSignedIn } from '@/lib/auth';
 
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
     const router = useRouter();

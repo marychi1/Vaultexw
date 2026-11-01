@@ -4,8 +4,6 @@ import { v4 as uuidv4 } from 'uuid';
 import Database from './database';
 import { User, Device, AuthToken, LoginNotification } from '../models/types';
 import AuditService from './auditService';
-import BlockchainService from './blockchainService';
-import CryptoService from './cryptoService';
 import { getBackendConfig } from '../config';
 
 const JWT_SECRET = getBackendConfig().jwtSecret;
@@ -35,19 +33,18 @@ class AuthService {
         return await bcryptjs.compare(pin, hashedPin);
     }
 
-    static async registerUser(phone: string, pin: string, walletAddress?: string, encryptedPrivateKey?: string): Promise<User> {
+    static async registerUser(phone: string, pin: string): Promise<User> {
         const existingUser = await Database.getUserByPhone(phone);
         if (existingUser) {
             throw new Error('User already registered');
         }
 
-        const generatedWallet = walletAddress && encryptedPrivateKey ? { walletAddress, encryptedPrivateKey } : BlockchainService.generateWallet();
         const user: User = {
             id: uuidv4(),
             phone,
             pinHash: pin, // Will be hashed before storing
-            walletAddress: generatedWallet.walletAddress,
-            encryptedPrivateKey: CryptoService.encrypt(generatedWallet.encryptedPrivateKey),
+            walletAddress: null,
+            encryptedPrivateKey: null,
             verified: true,
             createdAt: new Date(),
             balance: 0,

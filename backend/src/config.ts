@@ -7,8 +7,6 @@ export interface BackendConfig {
     port: number;
     jwtSecret: string;
     encryptionKey: string;
-    polygonRpcUrl: string;
-    usdtContractAddress: string;
     nodeEnv: string;
     supabaseUrl?: string;
     supabaseAnonKey?: string;
@@ -16,8 +14,6 @@ export interface BackendConfig {
     databaseDriver: 'file' | 'postgres';
     databaseUrl?: string;
     postgresEnabled: boolean;
-    allowMainnetTransfers: boolean;
-    maxDailyTransferUsdt: number;
     corsOrigins: string[];
     otpProvider: 'console' | 'twilio';
     twilioAccountSid?: string;
@@ -37,8 +33,6 @@ export function getBackendConfig(): BackendConfig {
     const port = Number(process.env.PORT || 3000);
     const jwtSecret = process.env.JWT_SECRET || `${nodeEnv}-vaultex-jwt-secret`;
     const encryptionKey = process.env.ENCRYPTION_KEY || 'vaultex-default-encryption-key-32B';
-    const polygonRpcUrl = process.env.POLYGON_RPC_URL || 'https://rpc-mumbai.maticvigil.com';
-    const usdtContractAddress = process.env.USDT_CONTRACT_ADDRESS || '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
     const supabaseUrl = process.env.SUPABASE_URL?.trim() || undefined;
     const supabaseAnonKey = process.env.SUPABASE_ANON_KEY?.trim() || undefined;
     const supabaseEnabled = Boolean(supabaseUrl && supabaseAnonKey);
@@ -49,8 +43,6 @@ export function getBackendConfig(): BackendConfig {
         : requestedDatabaseDriver === 'postgres' ? 'postgres' : 'file';
     const databaseUrl = process.env.DATABASE_URL?.trim() || undefined;
     const postgresEnabled = databaseDriver === 'postgres' && Boolean(databaseUrl);
-    const allowMainnetTransfers = process.env.ALLOW_MAINNET_TRANSFERS === 'true' && nodeEnv === 'production';
-    const maxDailyTransferUsdt = Math.max(0, Number(process.env.MAX_DAILY_TRANSFER_USDT || 1000));
     const corsOrigins = (process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean))
         || (nodeEnv === 'production' ? [] : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173']);
     const otpProvider = (process.env.OTP_PROVIDER || 'console').toLowerCase() === 'twilio' ? 'twilio' : 'console';
@@ -69,8 +61,6 @@ export function getBackendConfig(): BackendConfig {
         port,
         jwtSecret,
         encryptionKey,
-        polygonRpcUrl,
-        usdtContractAddress,
         nodeEnv,
         supabaseUrl,
         supabaseAnonKey,
@@ -78,8 +68,6 @@ export function getBackendConfig(): BackendConfig {
         databaseDriver,
         databaseUrl,
         postgresEnabled,
-        allowMainnetTransfers,
-        maxDailyTransferUsdt,
         corsOrigins,
         otpProvider,
         twilioAccountSid,
@@ -100,9 +88,6 @@ export function getProductionConfigErrors(config = getBackendConfig()): string[]
     const errors: string[] = [];
     if (config.jwtSecret.length < 64 || config.jwtSecret.includes('change-this')) {
         errors.push('JWT_SECRET must be a strong production secret');
-    }
-    if (config.encryptionKey.length < 64 || config.encryptionKey.includes('replace-with')) {
-        errors.push('ENCRYPTION_KEY must be a strong production secret');
     }
     if (!config.postgresEnabled) errors.push('DATABASE_DRIVER=postgres and DATABASE_URL are required');
     if (config.corsOrigins.length === 0) errors.push('CORS_ORIGIN is required');
