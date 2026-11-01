@@ -11,6 +11,7 @@ export interface WalletTransaction {
 export interface User {
     id: string;
     phone: string;
+    supabaseUserId?: string | null;
     pinHash: string; // Hashed PIN
     walletAddress: string | null;
     encryptedPrivateKey: string | null;

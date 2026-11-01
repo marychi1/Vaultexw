@@ -11,6 +11,7 @@ import Database, { ColumnWireIdempotencyConflictError } from './services/databas
 import WebAuthnService from './services/webauthnService';
 import PostgresService from './services/postgresService';
 import ColumnService from './services/columnService';
+import SupabaseAuthService from './services/supabaseAuthService';
 import { toColumnWireReceipt } from './services/columnWireReceipt';
 import { getBackendConfig, getProductionConfigErrors } from './config';
 
@@ -102,12 +103,16 @@ interface AuthRequest extends Request {
 // ===== OTP Routes =====
 app.post('/api/auth/request-otp', async (req: Request, res: Response) => {
   const { phone } = req.body;
-  if (!phone) {
+  if (typeof phone !== 'string' || !phone.trim()) {
     return res.status(400).json({ error: 'Phone number required' });
   }
 
   try {
-    const result = await OTPService.sendOTPToPhone(phone);
+    const config = getBackendConfig();
+    if (config.nodeEnv === 'production' && config.otpProvider !== 'twilio') {
+      return res.status(503).json({ error: 'Phone verification delivery is not configured' });
+    }
+    const result = await OTPService.sendOTPToPhone(phone.trim());
     // In production, don't return the actual OTP code
     return res.status(200).json({ message: 'OTP sent to phone', expiresAt: result.expiresAt });
   } catch (error) {
@@ -127,6 +132,137 @@ app.post('/api/auth/verify-otp', async (req: Request, res: Response) => {
   }
 
   return res.status(200).json({ message: 'OTP verified', verified: true });
+});
+
+app.post('/api/auth/request-link-otp', async (req: Request, res: Response) => {
+  const accessToken = req.header('Authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+  if (!accessToken) return res.status(401).json({ error: 'Supabase sign-in is required' });
+  if (!phone) return res.status(400).json({ error: 'Phone number required' });
+
+  try {
+    const config = getBackendConfig();
+    if ((!config.postgresEnabled && config.nodeEnv !== 'test') ||
+        (config.nodeEnv !== 'test' && config.otpProvider !== 'twilio')) {
+      return res.status(503).json({ error: 'Persistent account linking and phone verification are not configured' });
+    }
+
+    const customer = await SupabaseAuthService.getCustomer(accessToken);
+    if (!customer) return res.status(401).json({ error: 'Supabase session is invalid or expired' });
+    if (!customer.emailConfirmedAt) {
+      return res.status(403).json({ error: 'A verified Supabase email is required to link this account' });
+    }
+
+    const existingUser = await Database.getUserByPhone(phone);
+    if (existingUser && !existingUser.supabaseUserId) {
+      await OTPService.sendOTPToPhone(phone);
+    }
+    return res.status(200).json({ message: 'If the account is eligible, a verification code was sent' });
+  } catch (error) {
+    console.error('[Auth] Supabase customer phone verification request failed:', error);
+    return res.status(503).json({ error: 'Phone verification service is unavailable' });
+  }
+});
+
+app.post('/api/auth/link-customer', async (req: Request, res: Response) => {
+  const authorization = req.header('Authorization');
+  const accessToken = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const { phone, pin, code } = req.body;
+
+  if (!accessToken) return res.status(401).json({ error: 'Supabase sign-in is required' });
+  if (typeof phone !== 'string' || !phone.trim() ||
+      typeof pin !== 'string' || !/^\d{4,8}$/.test(pin) ||
+      typeof code !== 'string' || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'Phone, 4–8 digit PIN, and 6-digit OTP are required' });
+  }
+
+  try {
+    const config = getBackendConfig();
+    if (!config.postgresEnabled && config.nodeEnv !== 'test') {
+      return res.status(503).json({ error: 'Persistent account-link storage is unavailable' });
+    }
+    if (config.nodeEnv !== 'test' && config.otpProvider !== 'twilio') {
+      return res.status(503).json({ error: 'Phone verification delivery is not configured' });
+    }
+
+    const customer = await SupabaseAuthService.getCustomer(accessToken);
+    if (!customer) return res.status(401).json({ error: 'Supabase session is invalid or expired' });
+    if (!customer.emailConfirmedAt) {
+      return res.status(403).json({ error: 'A verified Supabase email is required to link this account' });
+    }
+
+    const linkedUser = await Database.getUserBySupabaseId(customer.id);
+    if (linkedUser) return res.status(409).json({ error: 'This customer account is already linked' });
+
+    const normalizedPhone = phone.trim();
+    const existingUser = await Database.getUserByPhone(normalizedPhone);
+    if (existingUser?.supabaseUserId) {
+      return res.status(409).json({ error: 'This backend account is already linked to a customer login' });
+    }
+    if (!(await OTPService.verifyOTP(normalizedPhone, code))) {
+      return res.status(401).json({ error: 'Phone verification failed' });
+    }
+
+    const ipAddress = req.ip || req.socket.remoteAddress || '';
+    const userAgent = req.header('user-agent') || '';
+    const deviceId = `supabase:${customer.id}`;
+    const login = await AuthService.authenticateUser(
+      normalizedPhone,
+      pin,
+      deviceId,
+      'VAULTEX customer app',
+      ipAddress,
+      userAgent
+    );
+
+    if (!(await OTPService.consumeOTP(normalizedPhone, code))) {
+      return res.status(401).json({ error: 'Phone verification expired or was already used; request a new code' });
+    }
+    if (!(await Database.linkSupabaseUserId(login.user.id, customer.id))) {
+      return res.status(409).json({ error: 'This account could not be linked; contact support' });
+    }
+
+    return res.status(201).json({
+      linked: true,
+      phone: `***${normalizedPhone.slice(-4)}`,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Account linking failed';
+    const status = message === 'Supabase authentication is not configured' ? 503
+      : message === 'Invalid PIN' || message === 'User not found' || message === 'PIN locked. Try later' ? 401
+        : 500;
+    if (status === 500) console.error('[Auth] Supabase customer account linking failed:', error);
+    return res.status(status).json({
+      error: status === 401 ? 'Account verification failed' : status === 503 ? message : 'Account linking failed',
+    });
+  }
+});
+
+app.get('/api/auth/customer-link', async (req: Request, res: Response) => {
+  const accessToken = req.header('Authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!accessToken) return res.status(401).json({ error: 'Supabase sign-in is required' });
+
+  try {
+    const config = getBackendConfig();
+    if (!config.postgresEnabled && config.nodeEnv !== 'test') {
+      return res.status(503).json({ error: 'Persistent account-link storage is unavailable' });
+    }
+
+    const customer = await SupabaseAuthService.getCustomer(accessToken);
+    if (!customer) return res.status(401).json({ error: 'Supabase session is invalid or expired' });
+    if (!customer.emailConfirmedAt) {
+      return res.status(403).json({ error: 'A verified Supabase email is required' });
+    }
+
+    const user = await Database.getUserBySupabaseId(customer.id);
+    return res.json({
+      linked: Boolean(user),
+      phone: user ? `***${user.phone.slice(-4)}` : undefined,
+    });
+  } catch (error) {
+    console.error('[Auth] Supabase customer account-link status lookup failed:', error);
+    return res.status(503).json({ error: 'Account-link status is unavailable' });
+  }
 });
 
 // ===== PIN Verification (for quick checks) =====
