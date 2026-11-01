@@ -34,7 +34,7 @@ The startup schema includes the nullable-wallet change. The same change is docum
 
 The root `render.yaml` defines an isolated staging service with a separately configured PostgreSQL URL. Keep `COLUMN_ENABLED=false` and `COLUMN_LIVE_WIRES_ENABLED=false`. The staging API can validate startup, database readiness, authentication, and transfer tracking, but it must not submit live wires.
 
-Configure `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_PHONE` privately in the Render staging service. The blueprint selects Twilio OTP because console OTP is not supported for customer account linking outside automated tests. Do not deploy the staging service until its required values have been entered. Use sandbox/test identities and phone numbers you control; never put credentials in this repository or chat.
+Configure `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, `CORS_ORIGIN`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_PHONE` privately in the Render staging service. Set `CORS_ORIGIN` to the exact customer-app Vercel Preview origin (scheme and hostname only, no path); update it if the preview hostname changes. The blueprint selects Twilio OTP because console OTP is not supported for customer account linking outside automated tests. Do not deploy the staging service until its required values have been entered. Use sandbox/test identities and phone numbers you control; never put credentials in this repository or chat.
 
 ### Pull request preview databases
 
