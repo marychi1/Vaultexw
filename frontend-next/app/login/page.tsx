@@ -7,8 +7,8 @@ import { loginUser } from '@/lib/api';
 
 export default function LoginPage() {
     const router = useRouter();
-    const [phone, setPhone] = useState('+1 555 123 4567');
-    const [pin, setPin] = useState('1234');
+    const [phone, setPhone] = useState('');
+    const [pin, setPin] = useState('');
     const [message, setMessage] = useState('');
     const [loading, setLoading] = useState(false);
 

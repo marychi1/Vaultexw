@@ -30,9 +30,12 @@ describe('Auth and OTP flows', () => {
             .post('/api/auth/signup')
             .send({ phone, pin: '1234', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev1', deviceName: 'test' });
         expect(signup.status).toBe(201);
+        expect(signup.body.user).not.toHaveProperty('encryptedPrivateKey');
+        expect(signup.body.user.walletAddress).not.toBe('0xabc');
 
         const login = await request(app).post('/api/auth/login').send({ phone, pin: '1234', deviceId: 'dev1', deviceName: 'test' });
         expect(login.status).toBe(200);
+        expect(login.body.user).not.toHaveProperty('encryptedPrivateKey');
 
         const verifyPin = await request(app).post('/api/auth/verify-pin').send({ phone, pin: '1234' });
         expect(verifyPin.status).toBe(200);
@@ -63,14 +66,14 @@ describe('Auth and OTP flows', () => {
         const missingKey = await request(app)
             .post('/api/column/transfers/wire')
             .set('Authorization', `Bearer ${signup.body.token}`)
-            .send({ amount: 100, currencyCode: 'USD', bankAccountId: 'bacc_test', counterpartyId: 'cpty_test', pin: '1234' });
+            .send({ amount: 100, currencyCode: 'USD', recipientName: 'Test Recipient', bankAccountId: 'bacc_test', counterpartyId: 'cpty_test', pin: '1234' });
         expect(missingKey.status).toBe(400);
 
         const disabled = await request(app)
             .post('/api/column/transfers/wire')
             .set('Authorization', `Bearer ${signup.body.token}`)
             .set('Idempotency-Key', 'idem_test_123456')
-            .send({ amount: 100, currencyCode: 'USD', bankAccountId: 'bacc_test', counterpartyId: 'cpty_test', pin: '1234' });
+            .send({ amount: 100, currencyCode: 'USD', recipientName: 'Test Recipient', bankAccountId: 'bacc_test', counterpartyId: 'cpty_test', pin: '1234' });
         expect(disabled.status).toBe(503);
         expect(disabled.body.error).toMatch(/disabled/i);
     });
@@ -209,10 +212,9 @@ describe('Auth and OTP flows', () => {
             .set('Authorization', `Bearer ${signup.body.token}`);
 
         expect(walletRes.status).toBe(200);
-        expect(walletRes.body.address).toBe('0xwallet-6');
+        expect(walletRes.body.address).toBe(signup.body.user.walletAddress);
         expect(walletRes.body.balance).toBeGreaterThanOrEqual(0);
-        expect(Array.isArray(walletRes.body.transactions)).toBe(true);
-        expect(walletRes.body.transactions.length).toBeGreaterThanOrEqual(0);
+        expect(walletRes.body.transactions).toEqual([]);
     });
 
     test('wallet history persists normalized transactions for a signed-in user', async () => {
@@ -231,6 +233,8 @@ describe('Auth and OTP flows', () => {
             amount: 12.5,
             date: '2026-09-15',
             status: 'completed',
+            reference: '0xtransaction-8',
+            recipient: '0xrecipient-8',
         }, '0xtransaction-8');
 
         const walletRes = await request(app)
@@ -243,6 +247,8 @@ describe('Auth and OTP flows', () => {
             type: 'withdrawal',
             amount: 12.5,
             status: 'completed',
+            reference: '0xtransaction-8',
+            recipient: '0xrecipient-8',
         });
     });
 
@@ -292,6 +298,7 @@ describe('Auth and OTP flows', () => {
         const storedUser = await Database.getUserByPhone(phone);
         expect(storedUser).toBeDefined();
         expect(storedUser!.encryptedPrivateKey).not.toBe(rawPrivateKey);
-        expect(CryptoService.decrypt(storedUser!.encryptedPrivateKey)).toBe(rawPrivateKey);
+        expect(CryptoService.decrypt(storedUser!.encryptedPrivateKey)).toMatch(/^0x[0-9a-f]{64}$/i);
+        expect(CryptoService.decrypt(storedUser!.encryptedPrivateKey)).not.toBe(rawPrivateKey);
     });
 });

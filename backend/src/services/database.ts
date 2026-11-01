@@ -1,8 +1,46 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { User, Device, OTP, LoginNotification, WalletTransaction } from '../models/types';
 import { getBackendConfig } from '../config';
 import PostgresService from './postgresService';
+import { getColumnWireEventStatus } from './columnWireStatus';
+
+export interface ColumnWireTransferRecord {
+    idempotencyKey: string;
+    reference: string;
+    userId: string;
+    transferId: string | null;
+    amountCents: number;
+    currencyCode: string;
+    recipientName: string;
+    bankAccountId: string;
+    counterpartyId: string;
+    description: string | null;
+    status: string;
+    lastErrorCode: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    lastReconciledAt: Date | null;
+}
+
+export interface ColumnWireTransferInput {
+    idempotencyKey: string;
+    userId: string;
+    amountCents: number;
+    currencyCode: string;
+    recipientName: string;
+    bankAccountId: string;
+    counterpartyId: string;
+    description?: string;
+}
+
+export class ColumnWireIdempotencyConflictError extends Error {
+    constructor() {
+        super('Idempotency-Key was already used for a different wire request.');
+        this.name = 'ColumnWireIdempotencyConflictError';
+    }
+}
 
 const DATA_FILE = path.resolve(__dirname, '../../data/vaultex-db.json');
 
@@ -63,7 +101,15 @@ class Database {
     }
 
     private static mapTransaction(row: any): WalletTransaction {
-        return { id: row.id, type: row.type, amount: Number(row.amount), date: new Date(row.created_at).toISOString().slice(0, 10), status: row.status };
+        return {
+            id: row.id,
+            type: row.type,
+            amount: Number(row.amount),
+            date: new Date(row.created_at).toISOString().slice(0, 10),
+            status: row.status,
+            reference: row.tx_hash || undefined,
+            recipient: row.recipient_address || undefined,
+        };
     }
 
     private static ensureDataFile() {
@@ -452,19 +498,230 @@ class Database {
     static async recordColumnWebhookEvent(event: { id: string; type: string; transferId?: string; payload: unknown }): Promise<boolean> {
         const pool = await this.postgresReady();
         if (pool) {
-            const result = await pool.query(`
-                INSERT INTO column_webhook_events (id,event_type,transfer_id,payload,received_at)
-                VALUES ($1,$2,$3,$4,NOW())
-                ON CONFLICT (id) DO NOTHING
-                RETURNING id
-            `, [event.id, event.type, event.transferId || null, event.payload]);
-            return result.rowCount === 1;
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                const result = await client.query(`
+                    INSERT INTO column_webhook_events (id,event_type,transfer_id,payload,received_at)
+                    VALUES ($1,$2,$3,$4,NOW())
+                    ON CONFLICT (id) DO NOTHING
+                    RETURNING id
+                `, [event.id, event.type, event.transferId || null, event.payload]);
+                if (result.rowCount !== 1) {
+                    await client.query('COMMIT');
+                    return false;
+                }
+
+                const status = getColumnWireEventStatus(event.type);
+                if (status && event.transferId) {
+                    await client.query(`
+                        UPDATE column_wire_transfers
+                        SET status = $1, updated_at = NOW(), last_error_code = NULL
+                        WHERE transfer_id = $2
+                          AND (
+                            status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                            OR $1 = 'RETURNED'
+                          )
+                    `, [status, event.transferId]);
+                }
+                await client.query('COMMIT');
+                return true;
+            } catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+            } finally {
+                client.release();
+            }
         }
 
         if (this.columnWebhookEvents.some((entry) => entry.id === event.id)) return false;
         this.columnWebhookEvents.push({ ...event, receivedAt: new Date() });
         this.persist();
         return true;
+    }
+
+    static async prepareColumnWireTransfer(input: ColumnWireTransferInput): Promise<ColumnWireTransferRecord> {
+        const pool = await this.postgresReady();
+        if (!pool) {
+            throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`
+                INSERT INTO column_wire_transfers (
+                    idempotency_key, reference, user_id, amount_cents, currency_code, recipient_name,
+                    bank_account_id, counterparty_id, description, status
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'SUBMISSION_PENDING')
+                ON CONFLICT (idempotency_key) DO NOTHING
+            `, [
+                input.idempotencyKey,
+                `VTX-${randomUUID().replace(/-/g, '').toUpperCase()}`,
+                input.userId,
+                input.amountCents,
+                input.currencyCode,
+                input.recipientName,
+                input.bankAccountId,
+                input.counterpartyId,
+                input.description || null,
+            ]);
+
+            const result = await client.query(
+                'SELECT * FROM column_wire_transfers WHERE idempotency_key = $1 FOR UPDATE',
+                [input.idempotencyKey]
+            );
+            const row = result.rows[0];
+            if (!row) {
+                throw new Error('Unable to persist Column wire request.');
+            }
+            if (
+                row.user_id !== input.userId ||
+                Number(row.amount_cents) !== input.amountCents ||
+                row.currency_code !== input.currencyCode ||
+                row.recipient_name !== input.recipientName ||
+                row.bank_account_id !== input.bankAccountId ||
+                row.counterparty_id !== input.counterpartyId ||
+                (row.description || null) !== (input.description || null)
+            ) {
+                throw new ColumnWireIdempotencyConflictError();
+            }
+
+            await client.query('COMMIT');
+            return this.mapColumnWireTransfer(row);
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    static async recordColumnWireSubmission(
+        idempotencyKey: string,
+        transfer: { id: string; status: string }
+    ): Promise<void> {
+        const pool = await this.postgresReady();
+        if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const result = await client.query(`
+                UPDATE column_wire_transfers
+                SET transfer_id = $1,
+                    status = CASE
+                        WHEN status IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                             AND status <> $2
+                             AND $2 <> 'RETURNED' THEN status
+                        ELSE $2
+                    END,
+                    last_error_code = NULL,
+                    updated_at = NOW()
+                WHERE idempotency_key = $3 AND (transfer_id IS NULL OR transfer_id = $1)
+            `, [transfer.id, transfer.status.toUpperCase(), idempotencyKey]);
+            if (result.rowCount !== 1) {
+                throw new Error('Column wire response could not be linked to its persisted request.');
+            }
+
+            const events = await client.query(`
+                SELECT event_type FROM column_webhook_events
+                WHERE transfer_id = $1
+                ORDER BY received_at DESC
+                LIMIT 1
+            `, [transfer.id]);
+            const webhookStatus = events.rows[0]
+                ? getColumnWireEventStatus(events.rows[0].event_type)
+                : undefined;
+            if (webhookStatus) {
+                await client.query(`
+                    UPDATE column_wire_transfers
+                    SET status = $1, updated_at = NOW()
+                    WHERE idempotency_key = $2
+                      AND (
+                        status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                        OR $1 = 'RETURNED'
+                      )
+                `, [webhookStatus, idempotencyKey]);
+            }
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    static async markColumnWireSubmissionUnknown(idempotencyKey: string, errorCode: string): Promise<void> {
+        const pool = await this.postgresReady();
+        if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        await pool.query(`
+            UPDATE column_wire_transfers
+            SET status = 'SUBMISSION_UNKNOWN', last_error_code = $1, updated_at = NOW()
+            WHERE idempotency_key = $2 AND transfer_id IS NULL
+        `, [errorCode, idempotencyKey]);
+    }
+
+    static async getColumnWireTransferForUser(
+        userId: string,
+        transferId: string
+    ): Promise<ColumnWireTransferRecord | undefined> {
+        const pool = await this.postgresReady();
+        if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        const result = await pool.query(
+            'SELECT * FROM column_wire_transfers WHERE user_id = $1 AND transfer_id = $2',
+            [userId, transferId]
+        );
+        return result.rows[0] ? this.mapColumnWireTransfer(result.rows[0]) : undefined;
+    }
+
+    static async listColumnWireTransfersForUser(userId: string): Promise<ColumnWireTransferRecord[]> {
+        const pool = await this.postgresReady();
+        if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        const result = await pool.query(
+            'SELECT * FROM column_wire_transfers WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100',
+            [userId]
+        );
+        return result.rows.map((row) => this.mapColumnWireTransfer(row));
+    }
+
+    static async updateColumnWireTransferStatus(
+        transferId: string,
+        status: string
+    ): Promise<void> {
+        const pool = await this.postgresReady();
+        if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        await pool.query(`
+            UPDATE column_wire_transfers
+            SET status = $1, updated_at = NOW(), last_reconciled_at = NOW(),
+                last_error_code = NULL
+            WHERE transfer_id = $2
+              AND (
+                status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                OR $1 = 'RETURNED'
+              )
+        `, [status.toUpperCase(), transferId]);
+    }
+
+    private static mapColumnWireTransfer(row: Record<string, any>): ColumnWireTransferRecord {
+        return {
+            idempotencyKey: row.idempotency_key,
+            reference: row.reference,
+            userId: row.user_id,
+            transferId: row.transfer_id,
+            amountCents: Number(row.amount_cents),
+            currencyCode: row.currency_code,
+            recipientName: row.recipient_name,
+            bankAccountId: row.bank_account_id,
+            counterpartyId: row.counterparty_id,
+            description: row.description,
+            status: row.status,
+            lastErrorCode: row.last_error_code,
+            createdAt: this.hydrateDate(row.created_at) as Date,
+            updatedAt: this.hydrateDate(row.updated_at) as Date,
+            lastReconciledAt: this.hydrateDate(row.last_reconciled_at) as Date | null,
+        };
     }
 
     static async getTransactions(userId: string): Promise<WalletTransaction[]> {
@@ -497,7 +754,19 @@ class Database {
     static async createTransaction(userId: string, transaction: WalletTransaction, txHash?: string): Promise<WalletTransaction> {
         const pool = await this.postgresReady();
         if (pool) {
-            await pool.query('INSERT INTO transactions (id,user_id,type,amount,tx_hash,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)', [transaction.id, userId, transaction.type, transaction.amount, txHash || null, transaction.status, new Date(`${transaction.date}T00:00:00.000Z`)]);
+            await pool.query(
+                'INSERT INTO transactions (id,user_id,type,amount,tx_hash,recipient_address,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+                [
+                    transaction.id,
+                    userId,
+                    transaction.type,
+                    transaction.amount,
+                    txHash || transaction.reference || null,
+                    transaction.recipient || null,
+                    transaction.status,
+                    new Date(`${transaction.date}T00:00:00.000Z`),
+                ]
+            );
             return transaction;
         }
         const user = this.users.find((entry) => entry.id === userId);

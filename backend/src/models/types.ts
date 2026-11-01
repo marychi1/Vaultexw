@@ -4,6 +4,8 @@ export interface WalletTransaction {
     amount: number;
     date: string;
     status: 'completed' | 'pending' | 'failed';
+    reference?: string;
+    recipient?: string;
 }
 
 export interface User {

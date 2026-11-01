@@ -9,6 +9,7 @@ describe('backend config', () => {
 
     test('uses environment overrides in production and enables Neon/Postgres when configured', () => {
         process.env.NODE_ENV = 'production';
+        delete process.env.COLUMN_LIVE_WIRES_ENABLED;
         process.env.JWT_SECRET = 'prod-secret';
         process.env.ENCRYPTION_KEY = '12345678901234567890123456789012';
         process.env.POLYGON_RPC_URL = 'https://rpc.example.com';
@@ -40,6 +41,7 @@ describe('backend config', () => {
 
     test('falls back to safe development defaults when values are missing', () => {
         process.env.NODE_ENV = 'development';
+        delete process.env.COLUMN_LIVE_WIRES_ENABLED;
         delete process.env.JWT_SECRET;
         delete process.env.ENCRYPTION_KEY;
         delete process.env.POLYGON_RPC_URL;
@@ -61,6 +63,25 @@ describe('backend config', () => {
         expect(config.maxDailyTransferUsdt).toBe(1000);
         expect(config.corsOrigins).toEqual(['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173']);
         expect(config.otpProvider).toBe('console');
+        expect(getProductionConfigErrors(config)).toEqual([]);
+    });
+
+    test('enables live Column wires only with production opt-in and persistent Column config', () => {
+        process.env.NODE_ENV = 'production';
+        process.env.JWT_SECRET = 'a'.repeat(64);
+        process.env.ENCRYPTION_KEY = 'b'.repeat(64);
+        process.env.CORS_ORIGIN = 'https://example.com';
+        process.env.COLUMN_LIVE_WIRES_ENABLED = 'true';
+        process.env.COLUMN_ENABLED = 'true';
+        process.env.COLUMN_API_KEY = 'column-api-key';
+        process.env.COLUMN_WEBHOOK_SECRET = 'column-webhook-secret';
+        process.env.COLUMN_WEBHOOK_ENDPOINT_ID = 'endpoint-id';
+        process.env.DATABASE_DRIVER = 'postgres';
+        process.env.DATABASE_URL = 'postgres://host/db';
+
+        const config = getBackendConfig();
+
+        expect(config.columnLiveWiresEnabled).toBe(true);
         expect(getProductionConfigErrors(config)).toEqual([]);
     });
 

@@ -53,17 +53,17 @@ export default function DashboardPage() {
                     <div className="metric-block">
                         <div className="label">Available balance</div>
                         <strong>{loading ? '...' : `${wallet.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</strong>
-                        <span className="metric-trend up">+12.4% this month</span>
+                        <span className="metric-trend">USDT on Polygon</span>
                     </div>
                     <div className="metric-block">
-                        <div className="label">Reserve</div>
-                        <strong>68.1%</strong>
-                        <span className="metric-trend">Protected</span>
+                        <div className="label">Payment security</div>
+                        <strong>PIN</strong>
+                        <span className="metric-trend">Required to send</span>
                     </div>
                     <div className="metric-block">
                         <div className="label">Network</div>
                         <strong>Polygon</strong>
-                        <span className="metric-trend up">Low latency</span>
+                        <span className="metric-trend">USDT transfers</span>
                     </div>
                 </section>
 
@@ -105,8 +105,8 @@ export default function DashboardPage() {
                         <table className="table">
                             <thead>
                                 <tr>
-                                    <th>ID</th>
-                                    <th>Type</th>
+                                    <th>Recipient</th>
+                                    <th>Reference</th>
                                     <th>Amount</th>
                                     <th>Date</th>
                                     <th>Status</th>
@@ -115,8 +115,12 @@ export default function DashboardPage() {
                             <tbody>
                                 {transactionRows.map((tx) => (
                                     <tr key={tx.id}>
-                                        <td>{tx.id}</td>
-                                        <td>{tx.type}</td>
+                                        <td title={tx.recipient || tx.type}>
+                                            {tx.recipient ? `${tx.recipient.slice(0, 8)}...${tx.recipient.slice(-6)}` : tx.type}
+                                        </td>
+                                        <td title={tx.reference || tx.id}>
+                                            {`${(tx.reference || tx.id).slice(0, 10)}...${(tx.reference || tx.id).slice(-8)}`}
+                                        </td>
                                         <td>{tx.amount > 0 ? '+' : ''}{tx.amount.toFixed(2)} USDT</td>
                                         <td>{tx.date}</td>
                                         <td><span className={`pill ${tx.status}`}>{tx.status}</span></td>

@@ -8,12 +8,13 @@ import authMiddleware from './middleware/authMiddleware';
 import AuthService from './services/authService';
 import OTPService from './services/otpService';
 import rateLimit from 'express-rate-limit';
-import Database from './services/database';
+import Database, { ColumnWireIdempotencyConflictError } from './services/database';
 import WebAuthnService from './services/webauthnService';
 import BlockchainService from './services/blockchainService';
 import CryptoService from './services/cryptoService';
 import PostgresService from './services/postgresService';
 import ColumnService from './services/columnService';
+import { toColumnWireReceipt } from './services/columnWireReceipt';
 import { getBackendConfig, getProductionConfigErrors } from './config';
 
 const app = express();
@@ -32,6 +33,9 @@ app.post('/api/webhooks/column', express.raw({ type: 'application/json' }), asyn
   const config = getBackendConfig();
   if (!config.columnEnabled || !config.columnWebhookSecret || !config.columnWebhookEndpointId) {
     return res.status(503).json({ error: 'Column integration is disabled' });
+  }
+  if (config.nodeEnv === 'production' && !config.postgresEnabled) {
+    return res.status(503).json({ error: 'Persistent webhook storage is unavailable' });
   }
 
   const signature = req.header('Column-Signature');
@@ -57,14 +61,18 @@ app.post('/api/webhooks/column', express.raw({ type: 'application/json' }), asyn
     return res.status(400).json({ error: 'Column webhook event is missing an ID or type' });
   }
 
-  const recorded = await Database.recordColumnWebhookEvent({
-    id: event.id,
-    type: event.type,
-    transferId: typeof event.data?.id === 'string' ? event.data.id : undefined,
-    payload: event,
-  });
-
-  return res.status(200).json({ received: true, duplicate: !recorded });
+  try {
+    const recorded = await Database.recordColumnWebhookEvent({
+      id: event.id,
+      type: event.type,
+      transferId: typeof event.data?.id === 'string' ? event.data.id : undefined,
+      payload: event,
+    });
+    return res.status(200).json({ received: true, duplicate: !recorded });
+  } catch (error) {
+    console.error('[Column webhook] Event persistence failed:', error);
+    return res.status(500).json({ error: 'Column webhook persistence failed' });
+  }
 });
 app.use(express.json());
 
@@ -82,6 +90,14 @@ const walletSendLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many transfer attempts. Try again later.' },
+});
+
+const columnWireLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many wire attempts. Try again later.' },
 });
 
 // Don't apply rate limiter during automated tests
@@ -186,7 +202,7 @@ app.post('/api/auth/webauthn/authenticate', async (req: Request, res: Response) 
     const ipAddress = (req.headers['x-forwarded-for'] as string) || req.connection.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
     const loginResult = await AuthService.authenticateUserByPhone(phone, deviceId || uuidv4(), deviceName || 'Web Browser', ipAddress, userAgent);
-    return res.json({ authenticated: true, token: loginResult.token, user: { walletAddress: loginResult.user.walletAddress, encryptedPrivateKey: loginResult.user.encryptedPrivateKey, phone: loginResult.user.phone } });
+    return res.json({ authenticated: true, token: loginResult.token, user: { walletAddress: loginResult.user.walletAddress, phone: loginResult.user.phone } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Authentication failed';
     return res.status(400).json({ error: message });
@@ -195,7 +211,7 @@ app.post('/api/auth/webauthn/authenticate', async (req: Request, res: Response) 
 
 // ===== Auth Routes =====
 app.post('/api/auth/signup', async (req: Request, res: Response) => {
-  const { phone, pin, walletAddress, encryptedPrivateKey, deviceId, deviceName } = req.body;
+  const { phone, pin, deviceId, deviceName } = req.body;
 
   if (!phone || !pin) {
     return res.status(400).json({ error: 'Phone and PIN required' });
@@ -203,11 +219,7 @@ app.post('/api/auth/signup', async (req: Request, res: Response) => {
 
   try {
     const hashedPin = await AuthService.hashPIN(pin);
-    const generatedWallet = walletAddress && encryptedPrivateKey
-      ? { walletAddress, encryptedPrivateKey }
-      : BlockchainService.generateWallet();
-
-    const user = await AuthService.registerUser(phone, hashedPin, generatedWallet.walletAddress, generatedWallet.encryptedPrivateKey);
+    const user = await AuthService.registerUser(phone, hashedPin);
 
     const ipAddress = (req.headers['x-forwarded-for'] as string) || req.connection.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
@@ -215,7 +227,7 @@ app.post('/api/auth/signup', async (req: Request, res: Response) => {
 
     return res.status(201).json({
       message: 'User registered',
-      user: { id: user.id, phone: user.phone, walletAddress: user.walletAddress, encryptedPrivateKey: user.encryptedPrivateKey },
+      user: { id: user.id, phone: user.phone, walletAddress: user.walletAddress },
       token: result.token,
     });
   } catch (error) {
@@ -241,7 +253,6 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
         id: result.user.id,
         phone: result.user.phone,
         walletAddress: result.user.walletAddress,
-        encryptedPrivateKey: result.user.encryptedPrivateKey,
       },
       token: result.token,
     });
@@ -261,16 +272,12 @@ app.get('/api/wallet', authMiddleware, async (req: AuthRequest, res: Response) =
 
   const balance = await BlockchainService.getUSDTBalance(user.walletAddress);
   const storedTransactions = await Database.getTransactions(user.id);
-  const transactions = storedTransactions.length > 0
-    ? storedTransactions
-    : [{ id: `tx-${Date.now()}`, type: 'deposit', amount: balance, date: new Date().toISOString().slice(0, 10), status: 'completed' }];
-
   return res.json({
     address: user.walletAddress,
     verified: user.verified,
     createdAt: user.createdAt,
     balance: Number(balance ?? user.balance ?? 0),
-    transactions,
+    transactions: storedTransactions,
     phone: user.phone,
   });
 });
@@ -329,17 +336,21 @@ app.post('/api/wallet/send', walletSendLimiter, authMiddleware, async (req: Auth
       amount: numericAmount,
       date: new Date().toISOString().slice(0, 10),
       status: result.status,
+      reference: result.txHash,
+      recipient: to,
     };
 
     await Database.createTransaction(user.id, tx, result.txHash);
     await Database.updateUser(user.id, { balance: Math.max(0, Number(user.balance || 0) - numericAmount) });
 
     return res.status(200).json({
-      message: 'Transfer initiated',
+      message: result.status === 'completed' ? 'Transfer confirmed' : 'Transfer submitted',
       txHash: result.txHash,
       to,
       amount: numericAmount,
       status: result.status,
+      network: 'Polygon',
+      completedAt: new Date().toISOString(),
     });
   } catch (error) {
     return res.status(400).json({ error: (error as Error).message });
@@ -347,38 +358,71 @@ app.post('/api/wallet/send', walletSendLimiter, authMiddleware, async (req: Auth
 });
 
 // ===== Column Transfer Routes (Protected) =====
+app.get('/api/column/transfers', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const transfers = await Database.listColumnWireTransfersForUser(req.userId!);
+    return res.json(transfers.map((transfer) => toColumnWireReceipt(transfer)));
+  } catch (error) {
+    console.error('[Column] Transfer list failed:', error);
+    return res.status(503).json({ error: 'Column transfer tracking is unavailable' });
+  }
+});
+
 app.get('/api/column/transfers/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
+  if (!getBackendConfig().columnEnabled) {
+    return res.status(503).json({ error: 'Column integration is disabled' });
+  }
+
   const transferId = req.params.id;
   if (!/^wire_[A-Za-z0-9]+$/.test(transferId)) {
     return res.status(400).json({ error: 'A valid Column wire transfer ID is required' });
   }
 
   try {
+    const tracked = await Database.getColumnWireTransferForUser(req.userId!, transferId);
+    if (!tracked) return res.status(404).json({ error: 'Column transfer not found' });
+
     const transfer = await ColumnService.getTransfer(transferId);
-    return res.json(transfer);
+    if (typeof transfer.status === 'string') {
+      await Database.updateColumnWireTransferStatus(transferId, transfer.status);
+    }
+    return res.json(toColumnWireReceipt(tracked, typeof transfer.status === 'string' ? transfer.status : tracked.status));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Column transfer lookup failed';
-    const status = message === 'Column integration is disabled' ? 503 : 502;
+    const status = message === 'Column integration is disabled' ||
+      message === 'Persistent PostgreSQL is required for Column wire tracking.' ? 503 : 502;
     return res.status(status).json({ error: message });
   }
 });
 
-app.post('/api/column/transfers/wire', authMiddleware, async (req: AuthRequest, res: Response) => {
-  const { amount, currencyCode, bankAccountId, counterpartyId, description, pin } = req.body;
+app.post('/api/column/transfers/wire', authMiddleware, columnWireLimiter, async (req: AuthRequest, res: Response) => {
+  const config = getBackendConfig();
+  const { amount, currencyCode, recipientName, bankAccountId, counterpartyId, description, pin } = req.body;
   const idempotencyKey = req.header('Idempotency-Key');
   const numericAmount = typeof amount === 'number' || typeof amount === 'string' ? Number(amount) : NaN;
 
   if (!Number.isSafeInteger(numericAmount) || numericAmount <= 0) {
     return res.status(400).json({ error: 'Amount must be a positive integer in cents' });
   }
-  if (currencyCode !== 'USD' || typeof bankAccountId !== 'string' || typeof counterpartyId !== 'string') {
+  if (currencyCode !== 'USD' ||
+      typeof bankAccountId !== 'string' || bankAccountId.length === 0 ||
+      typeof counterpartyId !== 'string' || counterpartyId.length === 0) {
     return res.status(400).json({ error: 'USD currency, bank account, and counterparty are required' });
+  }
+  if (typeof recipientName !== 'string' || !recipientName.trim() || recipientName.trim().length > 100) {
+    return res.status(400).json({ error: 'Recipient name is required and must be 100 characters or fewer' });
   }
   if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 255) {
     return res.status(400).json({ error: 'An Idempotency-Key header between 16 and 255 characters is required' });
   }
   if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) {
     return res.status(400).json({ error: 'A valid PIN is required' });
+  }
+  if (!config.columnLiveWiresEnabled) {
+    return res.status(503).json({ error: 'Live Column wire submissions are disabled' });
+  }
+  if (!config.postgresEnabled) {
+    return res.status(503).json({ error: 'Persistent Column wire tracking is unavailable' });
   }
 
   try {
@@ -387,19 +431,59 @@ app.post('/api/column/transfers/wire', authMiddleware, async (req: AuthRequest, 
       return res.status(401).json({ error: 'Invalid PIN' });
     }
 
-    const transfer = await ColumnService.createWire({
-      amount: numericAmount,
+    const normalizedDescription = typeof description === 'string' ? description.slice(0, 140) : undefined;
+    const tracked = await Database.prepareColumnWireTransfer({
+      userId: req.userId!,
+      idempotencyKey,
+      amountCents: numericAmount,
       currencyCode,
+      recipientName: recipientName.trim(),
       bankAccountId,
       counterpartyId,
-      description: typeof description === 'string' ? description.slice(0, 140) : undefined,
-      idempotencyKey,
+      description: normalizedDescription,
     });
-    return res.status(201).json(transfer);
+    if (tracked.transferId) {
+      const transfer = await ColumnService.getTransfer(tracked.transferId);
+      if (typeof transfer.status === 'string') {
+        await Database.updateColumnWireTransferStatus(tracked.transferId, transfer.status);
+      }
+      return res.status(200).json(toColumnWireReceipt(
+        tracked,
+        typeof transfer.status === 'string' ? transfer.status : tracked.status
+      ));
+    }
+
+    let transfer: Record<string, unknown>;
+    try {
+      transfer = await ColumnService.createWire({
+        amount: numericAmount,
+        currencyCode,
+        bankAccountId,
+        counterpartyId,
+        description: normalizedDescription,
+        idempotencyKey,
+      });
+    } catch (error) {
+      await Database.markColumnWireSubmissionUnknown(idempotencyKey, 'UPSTREAM_REQUEST_FAILED');
+      throw error;
+    }
+    if (typeof transfer.id !== 'string' || typeof transfer.status !== 'string') {
+      await Database.markColumnWireSubmissionUnknown(idempotencyKey, 'INVALID_UPSTREAM_RESPONSE');
+      return res.status(502).json({ error: 'Column returned an incomplete wire response; reconcile before retrying' });
+    }
+    await Database.recordColumnWireSubmission(idempotencyKey, {
+      id: transfer.id,
+      status: transfer.status,
+    });
+    return res.status(201).json(toColumnWireReceipt(tracked, transfer.status));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Column wire creation failed';
-    const status = message === 'Column integration is disabled' ? 503 : 502;
-    return res.status(status).json({ error: message });
+    if (error instanceof ColumnWireIdempotencyConflictError) {
+      return res.status(409).json({ error: error.message });
+    }
+    const status = message === 'Column integration is disabled' ||
+      message === 'Persistent PostgreSQL is required for Column wire tracking.' ? 503 : 502;
+    return res.status(status).json({ error: status === 503 ? message : 'Column wire submission failed; check tracked status before retrying' });
   }
 });
 
@@ -450,10 +534,10 @@ app.patch('/api/notifications/:id/read', authMiddleware, async (req: AuthRequest
 // ===== Health Check =====
 app.get('/api/health', async (_req: Request, res: Response) => {
   const { postgresEnabled, databaseDriver } = getBackendConfig();
-  const databaseConnected = postgresEnabled ? await PostgresService.ping() : true;
+  const databaseConnected = postgresEnabled ? await PostgresService.checkReady() : true;
   const blockchain = await BlockchainService.getNetworkStatus();
-  return res.json({
-    status: 'ok',
+  return res.status(databaseConnected ? 200 : 503).json({
+    status: databaseConnected ? 'ok' : 'degraded',
     message: 'Vaultex backend is running',
     databaseDriver,
     postgresEnabled,
@@ -472,8 +556,8 @@ if (require.main === module) {
   }
 
   const start = async () => {
-    if (config.nodeEnv === 'production' && !(await PostgresService.ping())) {
-      console.error('Production database is unavailable');
+    if (config.nodeEnv === 'production' && !(await PostgresService.checkReady())) {
+      console.error('Production database schema is unavailable');
       process.exit(1);
     }
 

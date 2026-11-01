@@ -28,6 +28,7 @@ export interface BackendConfig {
     columnWebhookSecret?: string;
     columnWebhookEndpointId?: string;
     columnEnabled: boolean;
+    columnLiveWiresEnabled: boolean;
 }
 
 export function getBackendConfig(): BackendConfig {
@@ -61,6 +62,8 @@ export function getBackendConfig(): BackendConfig {
     const columnWebhookSecret = process.env.COLUMN_WEBHOOK_SECRET?.trim() || undefined;
     const columnWebhookEndpointId = process.env.COLUMN_WEBHOOK_ENDPOINT_ID?.trim() || undefined;
     const columnEnabled = process.env.COLUMN_ENABLED === 'true' && Boolean(columnApiKey);
+    const columnLiveWiresEnabled =
+        process.env.COLUMN_LIVE_WIRES_ENABLED === 'true' && nodeEnv === 'production';
 
     return {
         port,
@@ -87,6 +90,7 @@ export function getBackendConfig(): BackendConfig {
         columnWebhookSecret,
         columnWebhookEndpointId,
         columnEnabled,
+        columnLiveWiresEnabled,
     };
 }
 
@@ -107,6 +111,9 @@ export function getProductionConfigErrors(config = getBackendConfig()): string[]
     }
     if (config.columnEnabled && (!config.columnApiKey || !config.columnWebhookSecret || !config.columnWebhookEndpointId)) {
         errors.push('Column API, webhook secret, and endpoint ID are required when Column is enabled');
+    }
+    if (config.columnLiveWiresEnabled && (!config.columnEnabled || !config.postgresEnabled)) {
+        errors.push('Live Column wires require Column and PostgreSQL to be enabled');
     }
 
     return errors;
