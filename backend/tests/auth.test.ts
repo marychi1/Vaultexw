@@ -20,6 +20,61 @@ describe('Auth and OTP flows', () => {
         expect(verify.body.verified).toBe(true);
     });
 
+    test('links a confirmed Supabase customer using the backend PIN and a one-time phone OTP', async () => {
+        const previousSupabaseUrl = process.env.SUPABASE_URL;
+        const previousSupabaseKey = process.env.SUPABASE_ANON_KEY;
+        process.env.SUPABASE_URL = 'https://project.supabase.co';
+        process.env.SUPABASE_ANON_KEY = 'test-anon-key';
+        const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+            id: 'supabase-customer-1',
+            email: 'customer@example.com',
+            email_confirmed_at: '2025-01-01T00:00:00.000Z',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+        try {
+            const phone = '555-0020';
+            const signup = await request(app)
+                .post('/api/auth/signup')
+                .send({ phone, pin: '1234', deviceId: 'link-test-device', deviceName: 'test' });
+            expect(signup.status).toBe(201);
+
+            await request(app)
+                .post('/api/auth/request-link-otp')
+                .set('Authorization', 'Bearer verified-supabase-token')
+                .send({ phone })
+                .expect(200);
+            const otp = await Database.getOTPByPhone(phone);
+            expect(otp).toBeDefined();
+
+            const link = await request(app)
+                .post('/api/auth/link-customer')
+                .set('Authorization', 'Bearer verified-supabase-token')
+                .send({ phone, pin: '1234', code: otp!.code });
+            expect(link.status).toBe(201);
+            expect(link.body).toEqual({ linked: true, phone: '***0020' });
+            expect((await Database.getUserByPhone(phone))?.supabaseUserId).toBe('supabase-customer-1');
+            expect(await Database.consumeOTP(phone, otp!.code)).toBe(false);
+
+            const linkStatus = await request(app)
+                .get('/api/auth/customer-link')
+                .set('Authorization', 'Bearer verified-supabase-token');
+            expect(linkStatus.status).toBe(200);
+            expect(linkStatus.body).toEqual({ linked: true, phone: '***0020' });
+
+            const duplicateLink = await request(app)
+                .post('/api/auth/link-customer')
+                .set('Authorization', 'Bearer verified-supabase-token')
+                .send({ phone, pin: '1234', code: otp!.code });
+            expect(duplicateLink.status).toBe(409);
+        } finally {
+            fetchMock.mockRestore();
+            if (previousSupabaseUrl === undefined) delete process.env.SUPABASE_URL;
+            else process.env.SUPABASE_URL = previousSupabaseUrl;
+            if (previousSupabaseKey === undefined) delete process.env.SUPABASE_ANON_KEY;
+            else process.env.SUPABASE_ANON_KEY = previousSupabaseKey;
+        }
+    });
+
     test('signup, login and verify PIN', async () => {
         const phone = '555-0002';
         const signup = await request(app)

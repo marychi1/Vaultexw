@@ -75,6 +75,7 @@ class Database {
         return {
             id: row.id,
             phone: row.phone,
+            supabaseUserId: row.supabase_user_id ?? null,
             pinHash: row.pin_hash,
             walletAddress: row.wallet_address ?? null,
             encryptedPrivateKey: row.encrypted_private_key ?? null,
@@ -255,6 +256,39 @@ class Database {
         return this.users.find((u) => u.id === id);
     }
 
+    static async getUserBySupabaseId(supabaseUserId: string): Promise<User | undefined> {
+        const pool = await this.postgresReady();
+        if (pool) {
+            const result = await pool.query('SELECT * FROM users WHERE supabase_user_id = $1', [supabaseUserId]);
+            return result.rows[0] ? this.mapUser(result.rows[0]) : undefined;
+        }
+        return this.users.find((user) => user.supabaseUserId === supabaseUserId);
+    }
+
+    static async linkSupabaseUserId(userId: string, supabaseUserId: string): Promise<boolean> {
+        const pool = await this.postgresReady();
+        if (pool) {
+            try {
+                const result = await pool.query(
+                    'UPDATE users SET supabase_user_id = $2 WHERE id = $1 AND (supabase_user_id IS NULL OR supabase_user_id = $2) RETURNING id',
+                    [userId, supabaseUserId]
+                );
+                return result.rowCount === 1;
+            } catch (error) {
+                if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {
+                    return false;
+                }
+                throw error;
+            }
+        }
+        const user = this.users.find((entry) => entry.id === userId);
+        if (!user || (user.supabaseUserId && user.supabaseUserId !== supabaseUserId)) return false;
+        if (this.users.some((entry) => entry.id !== userId && entry.supabaseUserId === supabaseUserId)) return false;
+        user.supabaseUserId = supabaseUserId;
+        this.persist();
+        return true;
+    }
+
     static async createUser(user: User): Promise<User> {
         // initialize security fields
         user.pinFailedAttempts = user.pinFailedAttempts || 0;
@@ -385,6 +419,48 @@ class Database {
             this.persist();
         }
         return otp;
+    }
+
+    static async consumeOTP(phone: string, code: string): Promise<boolean> {
+        const pool = await this.postgresReady();
+        if (pool) {
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                const result = await client.query(
+                    'SELECT id, code, expires_at, attempts FROM otps WHERE phone = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE',
+                    [phone]
+                );
+                const otp = result.rows[0];
+                if (!otp || new Date(otp.expires_at) <= new Date() || otp.attempts >= 3) {
+                    await client.query('COMMIT');
+                    return false;
+                }
+                if (otp.code !== code) {
+                    await client.query('UPDATE otps SET attempts = attempts + 1 WHERE id = $1', [otp.id]);
+                    await client.query('COMMIT');
+                    return false;
+                }
+                await client.query('DELETE FROM otps WHERE id = $1', [otp.id]);
+                await client.query('COMMIT');
+                return true;
+            } catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+            } finally {
+                client.release();
+            }
+        }
+        const otp = this.otps.find((entry) => entry.phone === phone && entry.expiresAt > new Date());
+        if (!otp || otp.attempts >= 3) return false;
+        if (otp.code !== code) {
+            otp.attempts += 1;
+            this.persist();
+            return false;
+        }
+        this.otps = this.otps.filter((entry) => entry.id !== otp.id);
+        this.persist();
+        return true;
     }
 
     // Notification operations

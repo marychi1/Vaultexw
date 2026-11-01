@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { randomInt } from 'crypto';
 import https from 'https';
 import Database from './database';
 import { OTP } from '../models/types';
@@ -6,7 +7,7 @@ import { getBackendConfig } from '../config';
 
 class OTPService {
     static generateOTP(): string {
-        return Math.floor(100000 + Math.random() * 900000).toString();
+        return randomInt(100000, 1000000).toString();
     }
 
     static async createOTP(phone: string): Promise<OTP> {
@@ -43,6 +44,10 @@ class OTPService {
         }
 
         return true;
+    }
+
+    static async consumeOTP(phone: string, code: string): Promise<boolean> {
+        return Database.consumeOTP(phone, code);
     }
 
     static async sendOTPToPhone(phone: string): Promise<{ code: string; expiresAt: Date }> {

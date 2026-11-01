@@ -1,6 +1,6 @@
 # VAULTEX bank-wire backend
 
-VAULTEX is being narrowed to domestic and international bank wires. This backend currently models USD wires through Column; it does not establish that international corridors are available. The customer app is not yet connected to this backend, and live wire submission remains disabled unless explicitly enabled in production.
+VAULTEX is being narrowed to bank wires. This backend currently models USD wires through Column; it does not establish that international corridors or a Fedwire settlement path are available. The customer app now supports linking a confirmed Supabase login to an existing backend account, but wire submission remains disabled.
 
 Crypto wallets, blockchain transfers, cards, and token products are not part of the current product. New accounts are created without wallets. Legacy wallet/key columns and records are preserved; the migration makes those columns nullable and does not erase existing data. The legacy wallet API returns HTTP 410.
 
@@ -34,7 +34,7 @@ The startup schema includes the nullable-wallet change. The same change is docum
 
 The root `render.yaml` defines an isolated staging service with a separately configured PostgreSQL URL. Keep `COLUMN_ENABLED=false` and `COLUMN_LIVE_WIRES_ENABLED=false`. The staging API can validate startup, database readiness, authentication, and transfer tracking, but it must not submit live wires.
 
-Configure `DATABASE_URL` and `JWT_SECRET` privately in Render. Keep `ENCRYPTION_KEY` protected while legacy encrypted wallet records remain in the database. Do not put credentials in this repository or chat.
+Configure `DATABASE_URL`, `JWT_SECRET`, `SUPABASE_URL`, and `SUPABASE_ANON_KEY` privately in Render. Configure Twilio OTP for phone verification; console OTP is not supported for customer account linking outside automated tests. Keep `ENCRYPTION_KEY` protected while legacy encrypted wallet records remain in the database. Do not put credentials in this repository or chat.
 
 ### Pull request preview databases
 
@@ -54,7 +54,7 @@ explicitly configured.
 
 ## Customer app
 
-`frontend-next` now presents wire-service status only. It explicitly states that transfers cannot be initiated or tracked there. The app has no authenticated identity bridge to the backend; do not expose transfer records until that is designed and tested.
+`frontend-next` presents wire-service status only. The separate customer app has a link-only flow that binds a confirmed Supabase identity to an existing backend account after phone OTP and PIN verification. Wire initiation and tracking are not enabled in that app. Do not expose transfer records or enable submission until Column account ownership, counterparty controls, sandbox support, and rail/limit details are verified.
 
 The customer app is maintained in a separate repository. Its legal and compliance pages are drafts and require qualified review before launch.
 
@@ -63,7 +63,9 @@ The customer app is maintained in a separate repository. Its legal and complianc
 ```text
 GET  /api/health
 POST /api/auth/request-otp
+POST /api/auth/request-link-otp
 POST /api/auth/verify-otp
+POST /api/auth/link-customer
 POST /api/auth/signup
 POST /api/auth/login
 GET  /api/column/transfers
