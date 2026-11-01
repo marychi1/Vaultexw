@@ -95,7 +95,8 @@ Receipts use a customer-facing Vaultex reference and show only recipient display
 
 The root `render.yaml` defines a blueprint for a separate, free Render staging
 API. It uses `NODE_ENV=staging`, PostgreSQL, and explicitly disables Column
-and live wires.
+and live wires. Its public Polygon RPC endpoint is for read-only network
+connectivity checks; mainnet transfers remain disabled.
 Create a **new staging database**, such as a separate Neon project; never point
 staging at the production database. Render's free Postgres databases expire
 after 30 days and do not support backups, so they are not suitable for staging
@@ -108,6 +109,11 @@ least 64 characters long. Do not put secret values in this repository or chat.
 Keep `COLUMN_ENABLED=false` and `COLUMN_LIVE_WIRES_ENABLED=false` until Column
 confirms the sandbox API endpoint and sandbox credentials are configured only
 in the staging service.
+
+The staging blueprint uses a public Polygon RPC endpoint to verify chain
+connectivity without an API key. Public RPC availability and rate limits are
+not guaranteed; replace it with a staging-only provider URL in Render if it
+becomes unreliable. Do not enable Polygon mainnet transfers in staging.
 
 The staging environment can validate startup, database readiness, and
 read-only health checks. The current wire-submission gate intentionally rejects
