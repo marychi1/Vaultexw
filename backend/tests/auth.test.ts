@@ -2,10 +2,6 @@ import request from 'supertest';
 import crypto from 'crypto';
 import app from '../src/index';
 import Database from '../src/services/database';
-import CryptoService from '../src/services/cryptoService';
-import BlockchainService from '../src/services/blockchainService';
-
-jest.spyOn(BlockchainService, 'getUSDTBalance').mockResolvedValue(0);
 
 describe('Auth and OTP flows', () => {
     beforeEach(async () => {
@@ -199,7 +195,7 @@ describe('Auth and OTP flows', () => {
         expect(loginAgain.body.error).toMatch(/revoked/i);
     });
 
-    test('wallet endpoint returns balance and transaction history for a signed-in user', async () => {
+    test('new signups do not create crypto wallets and wallet endpoints are disabled', async () => {
         const phone = '555-0006';
         const signup = await request(app)
             .post('/api/auth/signup')
@@ -211,10 +207,11 @@ describe('Auth and OTP flows', () => {
             .get('/api/wallet')
             .set('Authorization', `Bearer ${signup.body.token}`);
 
-        expect(walletRes.status).toBe(200);
-        expect(walletRes.body.address).toBe(signup.body.user.walletAddress);
-        expect(walletRes.body.balance).toBeGreaterThanOrEqual(0);
-        expect(walletRes.body.transactions).toEqual([]);
+        expect(walletRes.status).toBe(410);
+        expect(walletRes.body.error).toMatch(/not offered/i);
+        const user = await Database.getUserByPhone(phone);
+        expect(user?.walletAddress).toBeNull();
+        expect(user?.encryptedPrivateKey).toBeNull();
     });
 
     test('wallet history persists normalized transactions for a signed-in user', async () => {
@@ -241,18 +238,11 @@ describe('Auth and OTP flows', () => {
             .get('/api/wallet')
             .set('Authorization', `Bearer ${signup.body.token}`);
 
-        expect(walletRes.status).toBe(200);
-        expect(walletRes.body.transactions[0]).toMatchObject({
-            id: 'tx-history-8',
-            type: 'withdrawal',
-            amount: 12.5,
-            status: 'completed',
-            reference: '0xtransaction-8',
-            recipient: '0xrecipient-8',
-        });
+        expect(walletRes.status).toBe(410);
+        expect(walletRes.body.error).toMatch(/not offered/i);
     });
 
-    test('wallet send validates recipient and amount before blockchain submission', async () => {
+    test('wallet send is disabled for all requests', async () => {
         const phone = '555-0009';
         const signup = await request(app)
             .post('/api/auth/signup')
@@ -263,29 +253,29 @@ describe('Auth and OTP flows', () => {
             .post('/api/wallet/send')
             .set('Authorization', `Bearer ${signup.body.token}`)
             .send({ to: 'not-an-address', amount: 1 });
-        expect(invalidAddress.status).toBe(400);
+        expect(invalidAddress.status).toBe(410);
 
         const invalidAmount = await request(app)
             .post('/api/wallet/send')
             .set('Authorization', `Bearer ${signup.body.token}`)
             .send({ to: '0x0000000000000000000000000000000000000009', amount: '1.1234567' });
-        expect(invalidAmount.status).toBe(400);
+        expect(invalidAmount.status).toBe(410);
 
         const invalidPin = await request(app)
             .post('/api/wallet/send')
             .set('Authorization', `Bearer ${signup.body.token}`)
             .send({ to: '0x0000000000000000000000000000000000000009', amount: 1, pin: '0000' });
-        expect(invalidPin.status).toBe(401);
+        expect(invalidPin.status).toBe(410);
 
         const blockedMainnetTransfer = await request(app)
             .post('/api/wallet/send')
             .set('Authorization', `Bearer ${signup.body.token}`)
             .send({ to: '0x0000000000000000000000000000000000000009', amount: 1, pin: '1234' });
-        expect(blockedMainnetTransfer.status).toBe(403);
-        expect(blockedMainnetTransfer.body.error).toMatch(/disabled/i);
+        expect(blockedMainnetTransfer.status).toBe(410);
+        expect(blockedMainnetTransfer.body.error).toMatch(/not offered/i);
     });
 
-    test('signup encrypts wallet private keys before storing them', async () => {
+    test('signup ignores submitted crypto wallet data', async () => {
         const phone = '555-0007';
         const rawPrivateKey = 'raw-private-key-123';
 
@@ -297,8 +287,7 @@ describe('Auth and OTP flows', () => {
 
         const storedUser = await Database.getUserByPhone(phone);
         expect(storedUser).toBeDefined();
-        expect(storedUser!.encryptedPrivateKey).not.toBe(rawPrivateKey);
-        expect(CryptoService.decrypt(storedUser!.encryptedPrivateKey)).toMatch(/^0x[0-9a-f]{64}$/i);
-        expect(CryptoService.decrypt(storedUser!.encryptedPrivateKey)).not.toBe(rawPrivateKey);
+        expect(storedUser!.walletAddress).toBeNull();
+        expect(storedUser!.encryptedPrivateKey).toBeNull();
     });
 });

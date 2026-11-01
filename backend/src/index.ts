@@ -3,15 +3,12 @@ import cors from 'cors';
 import 'dotenv/config';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { ethers } from 'ethers';
 import authMiddleware from './middleware/authMiddleware';
 import AuthService from './services/authService';
 import OTPService from './services/otpService';
 import rateLimit from 'express-rate-limit';
 import Database, { ColumnWireIdempotencyConflictError } from './services/database';
 import WebAuthnService from './services/webauthnService';
-import BlockchainService from './services/blockchainService';
-import CryptoService from './services/cryptoService';
 import PostgresService from './services/postgresService';
 import ColumnService from './services/columnService';
 import { toColumnWireReceipt } from './services/columnWireReceipt';
@@ -82,14 +79,6 @@ const authLimiter = rateLimit({
   max: 10, // limit each IP to 10 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
-});
-
-const walletSendLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many transfer attempts. Try again later.' },
 });
 
 const columnWireLimiter = rateLimit({
@@ -202,7 +191,7 @@ app.post('/api/auth/webauthn/authenticate', async (req: Request, res: Response) 
     const ipAddress = (req.headers['x-forwarded-for'] as string) || req.connection.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
     const loginResult = await AuthService.authenticateUserByPhone(phone, deviceId || uuidv4(), deviceName || 'Web Browser', ipAddress, userAgent);
-    return res.json({ authenticated: true, token: loginResult.token, user: { walletAddress: loginResult.user.walletAddress, phone: loginResult.user.phone } });
+    return res.json({ authenticated: true, token: loginResult.token, user: { id: loginResult.user.id, phone: loginResult.user.phone } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Authentication failed';
     return res.status(400).json({ error: message });
@@ -227,7 +216,7 @@ app.post('/api/auth/signup', async (req: Request, res: Response) => {
 
     return res.status(201).json({
       message: 'User registered',
-      user: { id: user.id, phone: user.phone, walletAddress: user.walletAddress },
+      user: { id: user.id, phone: user.phone },
       token: result.token,
     });
   } catch (error) {
@@ -252,7 +241,6 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       user: {
         id: result.user.id,
         phone: result.user.phone,
-        walletAddress: result.user.walletAddress,
       },
       token: result.token,
     });
@@ -261,100 +249,10 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
   }
 });
 
-// ===== Wallet Routes (Protected) =====
-app.get('/api/wallet', authMiddleware, async (req: AuthRequest, res: Response) => {
-  const userId = req.userId;
-  const user = await Database.getUserById(userId!);
-
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  const balance = await BlockchainService.getUSDTBalance(user.walletAddress);
-  const storedTransactions = await Database.getTransactions(user.id);
-  return res.json({
-    address: user.walletAddress,
-    verified: user.verified,
-    createdAt: user.createdAt,
-    balance: Number(balance ?? user.balance ?? 0),
-    transactions: storedTransactions,
-    phone: user.phone,
-  });
-});
-
-app.post('/api/wallet/send', walletSendLimiter, authMiddleware, async (req: AuthRequest, res: Response) => {
-  const { to, amount, pin } = req.body;
-  const numericAmount = typeof amount === 'number' || typeof amount === 'string' ? Number(amount) : NaN;
-
-  if (typeof to !== 'string' || !ethers.isAddress(to)) {
-    return res.status(400).json({ error: 'A valid recipient address is required' });
-  }
-
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 1_000_000) {
-    return res.status(400).json({ error: 'Amount must be greater than 0 and no more than 1,000,000 USDT' });
-  }
-
-  if (!/^\d+(\.\d{1,6})?$/.test(String(amount).trim())) {
-    return res.status(400).json({ error: 'Amount supports up to 6 decimal places' });
-  }
-
-  if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) {
-    return res.status(400).json({ error: 'A valid PIN is required' });
-  }
-
-  try {
-    const user = await Database.getUserById(req.userId!);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    if (!(await AuthService.verifyPIN(pin, user.pinHash))) {
-      return res.status(401).json({ error: 'Invalid PIN' });
-    }
-
-    if (!getBackendConfig().allowMainnetTransfers) {
-      return res.status(403).json({ error: 'Mainnet transfers are disabled in this environment' });
-    }
-
-    const { maxDailyTransferUsdt } = getBackendConfig();
-    const dailyTotal = await Database.getDailyWithdrawalTotal(user.id);
-    if (dailyTotal + numericAmount > maxDailyTransferUsdt) {
-      return res.status(400).json({ error: `Daily transfer limit exceeded (${maxDailyTransferUsdt} USDT)` });
-    }
-
-    const liveBalance = await BlockchainService.getUSDTBalance(user.walletAddress);
-    if (numericAmount > liveBalance) {
-      return res.status(400).json({ error: 'Insufficient USDT balance' });
-    }
-
-    const privateKey = CryptoService.decrypt(user.encryptedPrivateKey);
-    const result = await BlockchainService.sendUSDT(to, numericAmount, privateKey);
-
-    const tx = {
-      id: result.txHash,
-      type: 'withdrawal' as const,
-      amount: numericAmount,
-      date: new Date().toISOString().slice(0, 10),
-      status: result.status,
-      reference: result.txHash,
-      recipient: to,
-    };
-
-    await Database.createTransaction(user.id, tx, result.txHash);
-    await Database.updateUser(user.id, { balance: Math.max(0, Number(user.balance || 0) - numericAmount) });
-
-    return res.status(200).json({
-      message: result.status === 'completed' ? 'Transfer confirmed' : 'Transfer submitted',
-      txHash: result.txHash,
-      to,
-      amount: numericAmount,
-      status: result.status,
-      network: 'Polygon',
-      completedAt: new Date().toISOString(),
-    });
-  } catch (error) {
-    return res.status(400).json({ error: (error as Error).message });
-  }
+// Legacy crypto wallet routes stay explicitly disabled while existing records
+// are preserved for review; they are not part of the bank-wire product.
+app.all(['/api/wallet', '/api/wallet/*'], (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Crypto wallet functionality is not offered' });
 });
 
 // ===== Column Transfer Routes (Protected) =====
@@ -535,15 +433,12 @@ app.patch('/api/notifications/:id/read', authMiddleware, async (req: AuthRequest
 app.get('/api/health', async (_req: Request, res: Response) => {
   const { postgresEnabled, databaseDriver } = getBackendConfig();
   const databaseConnected = postgresEnabled ? await PostgresService.checkReady() : true;
-  const blockchain = await BlockchainService.getNetworkStatus();
   return res.status(databaseConnected ? 200 : 503).json({
     status: databaseConnected ? 'ok' : 'degraded',
-    message: 'Vaultex backend is running',
+    message: 'Vaultex bank-transfer backend is running',
     databaseDriver,
     postgresEnabled,
     databaseConnected,
-    blockchainConnected: blockchain.connected,
-    blockchainChainId: blockchain.chainId ?? null,
   });
 });
 

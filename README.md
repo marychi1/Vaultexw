@@ -1,301 +1,75 @@
-# Vaultex - USDT Wallet
+# VAULTEX bank-wire backend
 
-Vaultex is a secure USDT wallet application for storing, sending, receiving, and converting USDT easily with enterprise-grade security features.
+VAULTEX is being narrowed to domestic and international bank wires. This backend currently models USD wires through Column; it does not establish that international corridors are available. The customer app is not yet connected to this backend, and live wire submission remains disabled unless explicitly enabled in production.
 
-## Key Features
+Crypto wallets, blockchain transfers, cards, and token products are not part of the current product. New accounts are created without wallets. Legacy wallet/key columns and records are preserved; the migration makes those columns nullable and does not erase existing data. The legacy wallet API returns HTTP 410.
 
-### 🔐 Security
+## Run and test
 
-- **OTP Verification**: Phone-based OTP for registration and sensitive actions
-- **Encrypted Wallet Storage**: AES-256 encrypted private keys (PIN-protected)
-- **User Authentication**: JWT token-based auth with 24-hour expiry
-- **Device Authorization**: Device tracking and login notifications
-- **Secure PIN**: Bcryptjs hashing with 10-round salts
+Requirements: Node.js and npm.
 
-### 💰 Wallet Features
-
-- **Blockchain USDT Integration**: Send and receive USDT on Polygon network
-- **Automatic Wallet Generation**: Ethereum-compatible wallet addresses
-- **Transaction History**: Complete deposit and withdrawal tracking
-- **Real-time Balance**: Live USDT balance from blockchain
-
-### 📱 User Features
-
-- **Multi-step Registration**: Phone → OTP → PIN → Wallet
-- **Device Management**: View registered devices and login history
-- **Login Notifications**: Get alerts for new device logins
-- **Responsive Design**: Works on desktop and mobile
-
-## Quick Start
-
-### Prerequisites
-
-- Docker Desktop installed and running
-- Node.js 24+ (if running without Docker)
-
-### Run with Docker
-
-```bash
-cd VAULTEX
-docker compose up --build
-```
-
-Services available at:
-
-- **Frontend**: `http://localhost:5173`
-- **Backend**: `http://localhost:4000`
-
-### Run Locally (Node.js)
-
-```bash
-# Install frontend dependencies
-cd frontend
+```powershell
+cd backend
 npm install
 npm run dev
-
-# In another terminal, install backend dependencies
-cd ../backend
-npm install
-npm run dev
+npm test
+npm run build
 ```
 
-## Architecture
+The API listens on port 3000 by default. Local authentication and the file-backed database are development defaults; use PostgreSQL and a real OTP provider for deployed environments.
 
-### Frontend Stack
+## Wire status and safety
 
-- React 19 + TypeScript
-- Vite for fast development
-- Ethers.js for blockchain interaction
-- React Router for navigation
-- CryptoJS for encryption
+- Column integration is disabled unless `COLUMN_ENABLED=true` and valid provider credentials are configured.
+- Live wire submission additionally requires `COLUMN_LIVE_WIRES_ENABLED=true`, `NODE_ENV=production`, and PostgreSQL.
+- Keep both Column flags disabled in staging. Do not use production credentials or enable live wires for testing.
+- The wire endpoint currently accepts USD only. Confirm corridors, currencies, beneficiary fields, fees, FX, and sandbox availability with Column before claiming international support.
+- A provider-completed status is not proof that the recipient bank credited funds.
+- The health endpoint reports database readiness only; blockchain health is not part of this product.
+- Do not retry an uncertain payment. Reconcile its status with Column and the receiving bank first.
 
-### Backend Stack
+The startup schema includes the nullable-wallet change. The same change is documented in `backend/sql/002_bank_wire_only_auth.sql`. Back up production data before deployment. Existing wallet data is intentionally retained until it can be safely reconciled; do not clear it as part of this product conversion.
 
-- Express.js + TypeScript
-- JWT for authentication
-- Bcryptjs for password hashing
-- Ethers.js for blockchain
-- In-memory database (easily swappable with PostgreSQL)
+## Staging
 
-### Neon/PostgreSQL
+The root `render.yaml` defines an isolated staging service with a separately configured PostgreSQL URL. Keep `COLUMN_ENABLED=false` and `COLUMN_LIVE_WIRES_ENABLED=false`. The staging API can validate startup, database readiness, authentication, and transfer tracking, but it must not submit live wires.
 
-The backend can use PostgreSQL when `DATABASE_DRIVER=postgres` and `DATABASE_URL` are configured. Startup initializes and checks the runtime schema; the core migration is also stored at `backend/sql/001_initial_neon_schema.sql`. Keep a verified database backup before production schema changes.
+Configure `DATABASE_URL` and `JWT_SECRET` privately in Render. Keep `ENCRYPTION_KEY` protected while legacy encrypted wallet records remain in the database. Do not put credentials in this repository or chat.
 
-The supplied product tables for virtual cards, yield positions, and token portfolios are intentionally deferred until those features have backend routes and service logic.
+### Pull request preview databases
 
-### Column wires and webhook tracking
+`.github/workflows/neon-preview-branches.yml` creates an isolated Neon branch
+named `preview/pr-<number>` for same-repository pull requests, based on the
+Neon `production` branch. Preview branches expire after 14 days and are deleted
+when the pull request closes. Fork pull requests are skipped so Neon credentials
+are never exposed to untrusted workflows.
 
-Live wire submission is disabled unless `COLUMN_LIVE_WIRES_ENABLED=true` is set in production. It also requires Column and PostgreSQL to be configured. Each request is persisted by user and `Idempotency-Key` before the upstream submission; reusing a key with different request details returns a conflict. Wire status is updated from deduplicated Column webhook events and refreshed from Column when an authorized user looks up their tracked transfer. These provider statuses are not independent confirmation that the recipient bank credited the funds. Webhook delivery failures return an error so Column can retry; monitor Column's delivery dashboard and the backend health endpoint after configuration.
+Before enabling the workflow, configure the GitHub repository variable
+`NEON_PROJECT_ID` with the staging Neon project ID and the Actions secret
+`NEON_API_KEY` with a Neon API key scoped to that project. Do not set the
+production project ID or grant this key access to production data. The workflow
+does not pass connection strings into logs or run migrations; preview databases
+are not connected to the application until a separate migration/test job is
+explicitly configured.
 
-Keep `COLUMN_LIVE_WIRES_ENABLED=false` in development and staging unless Column explicitly provides a sandbox with non-production credentials and endpoints. Do not enable production wires until credentials are rotated, the production database has a verified backup and restore, and signed webhook deliveries have succeeded.
+## Customer app
 
-Receipts use a customer-facing Vaultex reference and show only recipient display name, amount, rail, and provider status. They omit Column transfer IDs, idempotency keys, bank-account/counterparty IDs, and raw provider payload fields such as IMAD/OMAD. Do not display current account balance on a recipient receipt. Only show a bank logo or account suffix when sourced from a verified institution/counterparty record; the current wire API does not provide verified branding or recipient account details. A provider-completed wire status is not proof of recipient-bank posting.
+`frontend-next` now presents wire-service status only. It explicitly states that transfers cannot be initiated or tracked there. The app has no authenticated identity bridge to the backend; do not expose transfer records until that is designed and tested.
 
-### Staging deployment
+The customer app is maintained in a separate repository. Its legal and compliance pages are drafts and require qualified review before launch.
 
-The root `render.yaml` defines a blueprint for a separate, free Render staging
-API. It uses `NODE_ENV=staging`, PostgreSQL, and explicitly disables Column
-and live wires. Its public Polygon RPC endpoint is for read-only network
-connectivity checks; mainnet transfers remain disabled.
-Create a **new staging database**, such as a separate Neon project; never point
-staging at the production database. Render's free Postgres databases expire
-after 30 days and do not support backups, so they are not suitable for staging
-([Render free-tier limits](https://render.com/docs/free#free-postgres-instances)).
-
-When creating the Blueprint in Render, provide `DATABASE_URL`, `JWT_SECRET`,
-and `ENCRYPTION_KEY` directly in Render's environment settings.
-Use staging-only database credentials and independently generated secrets at
-least 64 characters long. Do not put secret values in this repository or chat.
-Keep `COLUMN_ENABLED=false` and `COLUMN_LIVE_WIRES_ENABLED=false` until Column
-confirms the sandbox API endpoint and sandbox credentials are configured only
-in the staging service.
-
-The staging blueprint uses a public Polygon RPC endpoint to verify chain
-connectivity without an API key. Public RPC availability and rate limits are
-not guaranteed; replace it with a staging-only provider URL in Render if it
-becomes unreliable. Do not enable Polygon mainnet transfers in staging.
-
-The staging environment can validate startup, database readiness, and
-read-only health checks. The current wire-submission gate intentionally rejects
-wire submissions outside production, so a Column sandbox transfer cannot be
-sent from staging until a separate, explicitly sandbox-only submission gate is
-implemented and tested. Never turn on the production live-wire setting to work
-around this restriction. Free Render services can sleep when idle; do not treat
-them as production or as proof of dependable webhook delivery.
-
-## Project Structure
+## API
 
 ```text
-VAULTEX/
-├── frontend/          # React web app
-│   ├── src/
-│   │   ├── pages/     # All pages (Login, SignUp, Dashboard, etc.)
-│   │   ├── services/  # Blockchain & encryption services
-│   │   ├── contexts/  # Wallet context provider
-│   │   └── components/# Reusable components
-│   └── package.json
-├── backend/          # Express API server
-│   ├── src/
-│   │   ├── services/ # Auth, OTP, blockchain services
-│   │   ├── models/   # TypeScript interfaces
-│   │   ├── middleware/ # Auth middleware
-│   │   └── index.ts  # Main server file
-│   └── package.json
-├── docker-compose.yml
-├── Dockerfile
-└── ADVANCED_FEATURES.md  # Detailed feature documentation
+GET  /api/health
+POST /api/auth/request-otp
+POST /api/auth/verify-otp
+POST /api/auth/signup
+POST /api/auth/login
+GET  /api/column/transfers
+GET  /api/column/transfers/:id
+POST /api/column/transfers
+POST /api/column/webhook
+GET  /api/wallet       # HTTP 410; not offered
+POST /api/wallet/*     # HTTP 410; not offered
 ```
-
-## API Endpoints
-
-### Authentication
-
-```text
-POST /api/auth/request-otp     # Request OTP
-POST /api/auth/verify-otp      # Verify OTP code
-POST /api/auth/signup          # Create account
-POST /api/auth/login           # Sign in
-```
-
-### Wallet (Protected)
-
-```text
-GET /api/wallet                # Get wallet info
-POST /api/wallet/send          # Send USDT
-```
-
-### Devices & Notifications (Protected)
-
-```text
-GET /api/devices               # List registered devices
-GET /api/notifications         # Get login notifications
-PATCH /api/notifications/:id/read  # Mark as read
-```
-
-## User Workflow
-
-### 1. Sign Up
-
-1. Go to `/signup`
-2. Enter phone number
-3. Request OTP
-4. Enter OTP code (check backend logs for demo OTP)
-5. Create PIN
-6. ✅ Wallet automatically generated
-
-### 2. Login
-
-1. Go to `/login`
-2. Enter phone and PIN
-3. Device authorized and registered
-4. ✅ Access wallet
-
-### 3. Send USDT
-
-1. Click "Send" on dashboard
-2. Enter recipient address
-3. Enter amount
-4. Confirm with PIN
-5. ✅ Transaction initiated
-
-### 4. Receive USDT
-
-1. Click "Receive" on dashboard
-2. Share wallet address
-3. Share QR code (placeholder)
-4. ✅ Wait for transaction
-
-### 5. Monitor Devices
-
-1. Click "Devices"
-2. View all registered devices
-3. Check login notifications
-4. Mark notifications as read
-
-## Documentation
-
-- **[ADVANCED_FEATURES.md](./ADVANCED_FEATURES.md)** - Comprehensive guide to all security and blockchain features
-- **[DOCKER.md](./DOCKER.md)** - Docker setup and deployment instructions
-
-## Security Notes
-
-⚠️ **Development Only**: This demo uses:
-
-- In-memory database (data lost on restart)
-- Hardcoded secrets (change in production)
-- Testnet USDT (no real value)
-- Console OTP logging (security risk)
-
-**Production Ready**:
-
-- ✅ Encrypted storage
-- ✅ JWT authentication
-- ✅ OTP verification
-- ✅ Device tracking
-- ✅ PIN hashing
-- ⚠️ Needs: Real database, SMS service, HTTPS, rate limiting
-
-## Environment Variables
-
-```bash
-# Frontend (.env)
-REACT_APP_API_URL=http://localhost:4000
-REACT_APP_ENCRYPTION_KEY=change-in-production
-
-# Backend (.env)
-JWT_SECRET=change-in-production
-ENCRYPTION_KEY=change-in-production
-DATABASE_DRIVER=postgres
-DATABASE_URL=postgresql://...
-OTP_PROVIDER=twilio
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=...
-TWILIO_FROM_PHONE=+15550000000
-PORT=4000
-```
-
-Use `OTP_PROVIDER=console` only for local development. Production must use `twilio` with all three Twilio settings configured; never commit these values.
-
-## Blockchain Integration
-
-- **Network**: Polygon Mainnet
-- **USDT Address**: `0xc2132D05D31c914a87C6611C10748AEb04B58e8F`
-- **Decimals**: 6
-- **RPC**: configured through `POLYGON_RPC_URL`
-
-Get test MATIC for gas fees: <https://faucet.polygon.technology/>
-
-## Testing
-
-### Test Credentials
-
-```text
-Phone: +1 555 123 4567
-OTP: (check backend console logs)
-PIN: 1234
-```
-
-### API Testing
-
-Use Postman/curl to test endpoints:
-
-```bash
-curl -X POST http://localhost:4000/api/health
-```
-
-## Contributing
-
-1. Create a branch
-2. Make changes
-3. Test locally with Docker
-4. Submit PR
-
-## License
-
-MIT
-
-## Support
-
-See [Support](http://localhost:5173/support) page in app for in-app help.
-
-For issues or questions, check [ADVANCED_FEATURES.md](./ADVANCED_FEATURES.md) for detailed technical documentation.

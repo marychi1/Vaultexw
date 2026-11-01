@@ -20,10 +20,6 @@ services:
         sync: false
       - key: ENCRYPTION_KEY
         sync: false
-      - key: POLYGON_RPC_URL
-        value: https://polygon-bor-rpc.publicnode.com
-      - key: ALLOW_MAINNET_TRANSFERS
-        value: "false"
       - key: COLUMN_ENABLED
         value: "false"
       - key: COLUMN_LIVE_WIRES_ENABLED

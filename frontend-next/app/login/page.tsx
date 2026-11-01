@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isSignedIn } from '@/lib/wallet';
+import { isSignedIn } from '@/lib/auth';
 import { loginUser } from '@/lib/api';
 
 export default function LoginPage() {
@@ -31,7 +31,7 @@ export default function LoginPage() {
             setMessage('');
             const result = await loginUser(phone, pin);
             localStorage.setItem('vaultex-token', result.token);
-            localStorage.setItem('vaultex-user', JSON.stringify({ phone, walletAddress: result.user.walletAddress }));
+            localStorage.setItem('vaultex-user', JSON.stringify({ id: result.user.id, phone }));
             setMessage('Login successful. Redirecting...');
             window.location.href = '/dashboard';
         } catch (error) {

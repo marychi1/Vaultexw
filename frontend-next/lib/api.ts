@@ -59,29 +59,3 @@ export async function signupUser(phone: string, pin: string) {
     if (!response.ok) throw new Error(data.error || 'Signup failed');
     return data;
 }
-
-export async function getWallet(token: string) {
-    const response = await fetch(`${API_BASE_URL}/api/wallet`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Unable to load wallet');
-    return data;
-}
-
-export async function sendWallet(token: string, to: string, amount: number, pin: string) {
-    const response = await fetch(`${API_BASE_URL}/api/wallet/send`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ to, amount, pin }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Transfer failed');
-    return data;
-}

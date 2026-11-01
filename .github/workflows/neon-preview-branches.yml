@@ -1,0 +1,61 @@
+name: Create/Delete Neon Branch for Pull Request
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+
+permissions: {}
+
+jobs:
+  create_neon_branch:
+    name: Create Neon preview branch
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+    steps:
+      - name: Check preview database configuration
+        if: ${{ vars.NEON_PROJECT_ID == '' || env.NEON_API_KEY == '' }}
+        run: echo "Skipping Neon preview branch; configure NEON_PROJECT_ID and NEON_API_KEY for the staging project."
+
+      - name: Set preview branch expiration
+        if: ${{ vars.NEON_PROJECT_ID != '' && env.NEON_API_KEY != '' }}
+        id: expiration
+        run: echo "expires_at=$(date -u --date '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Create Neon preview branch
+        if: ${{ vars.NEON_PROJECT_ID != '' && env.NEON_API_KEY != '' }}
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: preview/pr-${{ github.event.number }}
+          parent_branch: production
+          api_key: ${{ secrets.NEON_API_KEY }}
+          expires_at: ${{ steps.expiration.outputs.expires_at }}
+
+  delete_neon_branch:
+    name: Delete Neon preview branch
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+    steps:
+      - name: Check preview database configuration
+        if: ${{ vars.NEON_PROJECT_ID == '' || env.NEON_API_KEY == '' }}
+        run: echo "Skipping Neon preview cleanup; configure NEON_PROJECT_ID and NEON_API_KEY for the staging project."
+
+      - name: Delete Neon preview branch
+        if: ${{ vars.NEON_PROJECT_ID != '' && env.NEON_API_KEY != '' }}
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
