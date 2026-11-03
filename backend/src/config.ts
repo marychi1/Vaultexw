@@ -58,7 +58,9 @@ export function getBackendConfig(): BackendConfig {
     const columnWebhookSecret = process.env.COLUMN_WEBHOOK_SECRET?.trim() || undefined;
     const columnWebhookEndpointId = process.env.COLUMN_WEBHOOK_ENDPOINT_ID?.trim() || undefined;
     const columnEnabled = process.env.COLUMN_ENABLED === 'true' && Boolean(columnApiKey);
+    const liveWireOwnershipControlsImplemented = false;
     const columnLiveWiresEnabled =
+        liveWireOwnershipControlsImplemented &&
         process.env.COLUMN_LIVE_WIRES_ENABLED === 'true' && nodeEnv === 'production';
 
     return {

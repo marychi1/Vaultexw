@@ -72,7 +72,7 @@ describe('backend config', () => {
         expect(getProductionConfigErrors(config)).toEqual([]);
     });
 
-    test('enables live Column wires only with production opt-in and persistent Column config', () => {
+    test('keeps live Column wires disabled until ownership controls are implemented', () => {
         process.env.NODE_ENV = 'production';
         process.env.JWT_SECRET = 'a'.repeat(64);
         process.env.ENCRYPTION_KEY = 'b'.repeat(64);
@@ -87,7 +87,8 @@ describe('backend config', () => {
 
         const config = getBackendConfig();
 
-        expect(config.columnLiveWiresEnabled).toBe(true);
+        expect(config.columnEnabled).toBe(true);
+        expect(config.columnLiveWiresEnabled).toBe(false);
         expect(getProductionConfigErrors(config)).toEqual([]);
     });
 

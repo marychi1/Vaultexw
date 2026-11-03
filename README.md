@@ -21,7 +21,7 @@ The API listens on port 3000 by default. Local authentication and the file-backe
 ## Wire status and safety
 
 - Column integration is disabled unless `COLUMN_ENABLED=true` and valid provider credentials are configured.
-- Live wire submission additionally requires `COLUMN_LIVE_WIRES_ENABLED=true`, `NODE_ENV=production`, and PostgreSQL.
+- Live wire submission is hard-disabled in code until server-side account and counterparty ownership controls are implemented and tested. The `COLUMN_LIVE_WIRES_ENABLED` flag cannot enable it.
 - Keep both Column flags disabled in staging. Do not use production credentials or enable live wires for testing.
 - The wire endpoint currently accepts USD only. Confirm corridors, currencies, beneficiary fields, fees, FX, and sandbox availability with Column before claiming international support.
 - A provider-completed status is not proof that the recipient bank credited funds.
