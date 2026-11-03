@@ -62,6 +62,7 @@ The customer app is maintained in a separate repository. Its legal and complianc
 
 ```text
 GET  /api/health
+GET  /api/environment
 POST /api/auth/request-otp
 POST /api/auth/request-link-otp
 POST /api/auth/verify-otp

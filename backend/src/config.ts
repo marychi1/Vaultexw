@@ -43,8 +43,12 @@ export function getBackendConfig(): BackendConfig {
         : requestedDatabaseDriver === 'postgres' ? 'postgres' : 'file';
     const databaseUrl = process.env.DATABASE_URL?.trim() || undefined;
     const postgresEnabled = databaseDriver === 'postgres' && Boolean(databaseUrl);
-    const corsOrigins = (process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean))
-        || (nodeEnv === 'production' ? [] : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173']);
+    const configuredCorsOrigins = process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean)
+        ?? (nodeEnv === 'production' ? [] : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173']);
+    const productionCorsOrigins = nodeEnv === 'production'
+        ? ['https://vaultexwallet.io', 'https://www.vaultexwallet.io']
+        : [];
+    const corsOrigins = [...new Set([...configuredCorsOrigins, ...productionCorsOrigins])];
     const otpProvider = (process.env.OTP_PROVIDER || 'console').toLowerCase() === 'twilio' ? 'twilio' : 'console';
     const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID?.trim() || undefined;
     const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN?.trim() || undefined;
