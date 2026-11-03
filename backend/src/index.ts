@@ -74,6 +74,17 @@ app.post('/api/webhooks/column', express.raw({ type: 'application/json' }), asyn
 });
 app.use(express.json());
 
+app.get('/api/environment', (_req: Request, res: Response) => {
+  const config = getBackendConfig();
+  const environment = config.nodeEnv === 'production'
+    ? 'production'
+    : config.nodeEnv === 'staging' ? 'staging' : 'development';
+  const wireSubmissions = config.columnEnabled && config.columnLiveWiresEnabled ? 'live' : 'disabled';
+
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({ environment, wireSubmissions });
+});
+
 // Rate limiter for auth endpoints
 const authLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
