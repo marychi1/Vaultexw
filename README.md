@@ -64,10 +64,10 @@ The customer app is maintained in a separate repository. Its legal and complianc
 GET  /api/health
 GET  /api/environment
 POST /api/auth/request-otp
-POST /api/auth/request-link-otp
 POST /api/auth/verify-otp
+POST /api/auth/signup       # requires and consumes a valid phone OTP
+POST /api/auth/request-link-otp
 POST /api/auth/link-customer
-POST /api/auth/signup
 POST /api/auth/login
 GET  /api/column/transfers
 GET  /api/column/transfers/:id

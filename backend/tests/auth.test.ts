@@ -3,6 +3,13 @@ import crypto from 'crypto';
 import app from '../src/index';
 import Database from '../src/services/database';
 
+async function signupWithOtp(payload: { phone: string; [key: string]: unknown }) {
+    await request(app).post('/api/auth/request-otp').send({ phone: payload.phone }).expect(200);
+    const otp = await Database.getOTPByPhone(payload.phone);
+    if (!otp) throw new Error('Signup OTP was not created');
+    return request(app).post('/api/auth/signup').send({ ...payload, code: otp.code });
+}
+
 describe('Auth and OTP flows', () => {
     beforeEach(async () => {
         await Database.resetAll();
@@ -28,6 +35,28 @@ describe('Auth and OTP flows', () => {
         expect(verify.body.verified).toBe(true);
     });
 
+    test('signup requires and consumes a valid OTP', async () => {
+        const phone = '555-0021';
+        const missingOtp = await request(app)
+            .post('/api/auth/signup')
+            .send({ phone, pin: '1234' });
+        expect(missingOtp.status).toBe(400);
+
+        await request(app).post('/api/auth/request-otp').send({ phone }).expect(200);
+        const otp = await Database.getOTPByPhone(phone);
+        expect(otp).toBeDefined();
+
+        const signup = await request(app)
+            .post('/api/auth/signup')
+            .send({ phone, pin: '1234', code: otp!.code });
+        expect(signup.status).toBe(201);
+
+        const reusedOtp = await request(app)
+            .post('/api/auth/signup')
+            .send({ phone, pin: '1234', code: otp!.code });
+        expect(reusedOtp.status).toBe(401);
+    });
+
     test('links a confirmed Supabase customer using the backend PIN and a one-time phone OTP', async () => {
         const previousSupabaseUrl = process.env.SUPABASE_URL;
         const previousSupabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -41,9 +70,7 @@ describe('Auth and OTP flows', () => {
 
         try {
             const phone = '555-0020';
-            const signup = await request(app)
-                .post('/api/auth/signup')
-                .send({ phone, pin: '1234', deviceId: 'link-test-device', deviceName: 'test' });
+            const signup = await signupWithOtp({ phone, pin: '1234', deviceId: 'link-test-device', deviceName: 'test' });
             expect(signup.status).toBe(201);
 
             await request(app)
@@ -85,9 +112,7 @@ describe('Auth and OTP flows', () => {
 
     test('signup, login and verify PIN', async () => {
         const phone = '555-0002';
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone, pin: '1234', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev1', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone, pin: '1234', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev1', deviceName: 'test' });
         expect(signup.status).toBe(201);
         expect(signup.body.user).not.toHaveProperty('encryptedPrivateKey');
         expect(signup.body.user.walletAddress).not.toBe('0xabc');
@@ -105,9 +130,7 @@ describe('Auth and OTP flows', () => {
         const unauthorized = await request(app).get('/api/column/transfers/wire_test123');
         expect(unauthorized.status).toBe(401);
 
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone: '555-0009', pin: '1234', walletAddress: '0xwallet-9', encryptedPrivateKey: 'enc', deviceId: 'dev9', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone: '555-0009', pin: '1234', walletAddress: '0xwallet-9', encryptedPrivateKey: 'enc', deviceId: 'dev9', deviceName: 'test' });
 
         const lookup = await request(app)
             .get('/api/column/transfers/wire_test123')
@@ -118,9 +141,7 @@ describe('Auth and OTP flows', () => {
     });
 
     test('Column wire creation requires a valid idempotency key and stays disabled by default', async () => {
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone: '555-0010', pin: '1234', walletAddress: '0xwallet-10', encryptedPrivateKey: 'enc', deviceId: 'dev10', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone: '555-0010', pin: '1234', walletAddress: '0xwallet-10', encryptedPrivateKey: 'enc', deviceId: 'dev10', deviceName: 'test' });
 
         const missingKey = await request(app)
             .post('/api/column/transfers/wire')
@@ -184,9 +205,7 @@ describe('Auth and OTP flows', () => {
 
     test('PIN lockout after repeated failures', async () => {
         const phone = '555-0003';
-        await request(app)
-            .post('/api/auth/signup')
-            .send({ phone, pin: '9999', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev2', deviceName: 'test' });
+        await signupWithOtp({ phone, pin: '9999', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev2', deviceName: 'test' });
 
         // 5 wrong attempts
         for (let i = 0; i < 5; i++) {
@@ -202,9 +221,7 @@ describe('Auth and OTP flows', () => {
 
     test('device revoke blocks token and notifications are available', async () => {
         const phone = '555-0004';
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone, pin: '1234', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev3', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone, pin: '1234', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev3', deviceName: 'test' });
 
         expect(signup.status).toBe(201);
         const token = signup.body.token;
@@ -238,9 +255,7 @@ describe('Auth and OTP flows', () => {
 
     test('revoked device ID cannot login again', async () => {
         const phone = '555-0005';
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone, pin: '1234', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev4', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone, pin: '1234', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev4', deviceName: 'test' });
 
         expect(signup.status).toBe(201);
         const token = signup.body.token;
@@ -260,9 +275,7 @@ describe('Auth and OTP flows', () => {
 
     test('new signups do not create crypto wallets and wallet endpoints are disabled', async () => {
         const phone = '555-0006';
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone, pin: '1234', walletAddress: '0xwallet-6', encryptedPrivateKey: 'enc', deviceId: 'dev6', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone, pin: '1234', walletAddress: '0xwallet-6', encryptedPrivateKey: 'enc', deviceId: 'dev6', deviceName: 'test' });
 
         expect(signup.status).toBe(201);
 
@@ -279,9 +292,7 @@ describe('Auth and OTP flows', () => {
 
     test('wallet history persists normalized transactions for a signed-in user', async () => {
         const phone = '555-0008';
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone, pin: '1234', walletAddress: '0xwallet-8', encryptedPrivateKey: 'enc', deviceId: 'dev8', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone, pin: '1234', walletAddress: '0xwallet-8', encryptedPrivateKey: 'enc', deviceId: 'dev8', deviceName: 'test' });
 
         expect(signup.status).toBe(201);
         const user = await Database.getUserByPhone(phone);
@@ -307,9 +318,7 @@ describe('Auth and OTP flows', () => {
 
     test('wallet send is disabled for all requests', async () => {
         const phone = '555-0009';
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone, pin: '1234', walletAddress: '0xwallet-9', encryptedPrivateKey: 'enc', deviceId: 'dev9', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone: '555-0009', pin: '1234', walletAddress: '0xwallet-9', encryptedPrivateKey: 'enc', deviceId: 'dev9', deviceName: 'test' });
 
         expect(signup.status).toBe(201);
         const invalidAddress = await request(app)
@@ -342,9 +351,7 @@ describe('Auth and OTP flows', () => {
         const phone = '555-0007';
         const rawPrivateKey = 'raw-private-key-123';
 
-        const signup = await request(app)
-            .post('/api/auth/signup')
-            .send({ phone, pin: '1234', walletAddress: '0xwallet-7', encryptedPrivateKey: rawPrivateKey, deviceId: 'dev7', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone, pin: '1234', walletAddress: '0xwallet-7', encryptedPrivateKey: rawPrivateKey, deviceId: 'dev7', deviceName: 'test' });
 
         expect(signup.status).toBe(201);
 

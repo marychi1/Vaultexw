@@ -347,19 +347,31 @@ app.post('/api/auth/webauthn/authenticate', async (req: Request, res: Response) 
 
 // ===== Auth Routes =====
 app.post('/api/auth/signup', async (req: Request, res: Response) => {
-  const { phone, pin, deviceId, deviceName } = req.body;
+  const { phone, pin, code, deviceId, deviceName } = req.body;
 
-  if (!phone || !pin) {
-    return res.status(400).json({ error: 'Phone and PIN required' });
+  if (typeof phone !== 'string' || !phone.trim() ||
+      typeof pin !== 'string' || !/^\d{4,8}$/.test(pin) ||
+      typeof code !== 'string' || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'Phone, 4–8 digit PIN, and 6-digit OTP are required' });
+  }
+
+  const normalizedPhone = phone.trim();
+  try {
+    if (!(await OTPService.consumeOTP(normalizedPhone, code))) {
+      return res.status(401).json({ error: 'Invalid or expired OTP' });
+    }
+  } catch (error) {
+    console.error('[Auth] Signup OTP verification failed:', error);
+    return res.status(503).json({ error: 'Phone verification service is unavailable' });
   }
 
   try {
     const hashedPin = await AuthService.hashPIN(pin);
-    const user = await AuthService.registerUser(phone, hashedPin);
+    const user = await AuthService.registerUser(normalizedPhone, hashedPin);
 
     const ipAddress = (req.headers['x-forwarded-for'] as string) || req.connection.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
-    const result = await AuthService.authenticateUser(phone, pin, deviceId || uuidv4(), deviceName || 'Unknown Device', ipAddress, userAgent);
+    const result = await AuthService.authenticateUser(normalizedPhone, pin, deviceId || uuidv4(), deviceName || 'Unknown Device', ipAddress, userAgent);
 
     return res.status(201).json({
       message: 'User registered',
