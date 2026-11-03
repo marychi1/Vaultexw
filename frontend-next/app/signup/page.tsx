@@ -62,7 +62,7 @@ export default function SignUpPage() {
 
         try {
             setLoading(true);
-            const result = await signupUser(phone, pin);
+            const result = await signupUser(phone, pin, otp);
             localStorage.setItem('vaultex-token', result.token);
             localStorage.setItem('vaultex-user', JSON.stringify({ id: result.user.id, phone }));
             setMessage('Account created successfully!');
