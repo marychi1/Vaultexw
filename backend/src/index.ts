@@ -505,8 +505,9 @@ app.post('/api/auth/signup', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Phone, 4–8 digit PIN, and 6-digit OTP are required' });
   }
 
+  const normalizedPhone = phone.trim();
   try {
-    if (!(await OTPService.consumeOTP(phone.trim(), code))) {
+    if (!(await OTPService.consumeOTP(normalizedPhone, code))) {
       return res.status(401).json({ error: 'Invalid or expired OTP' });
     }
   } catch (error) {
@@ -514,7 +515,6 @@ app.post('/api/auth/signup', async (req: Request, res: Response) => {
     return res.status(503).json({ error: 'Phone verification service is unavailable' });
   }
 
-  const normalizedPhone = phone.trim();
   try {
     const hashedPin = await AuthService.hashPIN(pin);
     const user = await AuthService.registerUser(normalizedPhone, hashedPin);

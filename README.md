@@ -63,7 +63,6 @@ The startup schema includes the nullable-wallet change. The same change is docum
 The root `render.yaml` defines an isolated staging service with a separately configured PostgreSQL URL. Column and all wire/counterparty feature flags default to `false`. Keep `COLUMN_LIVE_WIRES_ENABLED=false` permanently; the production live-wire path is hard-blocked in code.
 
 Configure `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, `CORS_ORIGIN`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_PHONE` privately in the Render staging service. Set `CORS_ORIGIN` to the exact customer-app Vercel Preview origin (scheme and hostname only, no path); update it if the preview hostname changes. The blueprint selects Twilio OTP because console OTP is not supported for customer account linking outside automated tests. Do not deploy the staging service until its required values have been entered. Use sandbox/test identities and phone numbers you control; never put credentials in this repository or chat.
-
 For an explicitly approved sandbox E2E run only, first confirm the service points to a dedicated non-production database and health reports `environment: "staging"` with `wireSubmissions: "disabled"`. Configure a Column `test_` API key and sandbox webhook values in Render's secret store, then enable `COLUMN_ENABLED=true`, `COLUMN_CUSTOMER_COUNTERPARTIES_ENABLED=true`, and `COLUMN_SANDBOX_WIRES_ENABLED=true` only for the test window. Never set `COLUMN_LIVE_WIRES_ENABLED=true`; do not configure production funding-account identifiers in staging. Use Column-provided sandbox account/beneficiary fixtures or synthetic test details, never real customer bank details. Run the beneficiary create/list, sandbox wire, idempotency, and status-reconciliation checks, then restore all three opt-in flags to `false`. Do not run migration `backend/sql/003_column_customer_counterparties.sql` against production.
 
 ### Pull request preview databases
@@ -84,7 +83,7 @@ explicitly configured.
 
 ## Customer app
 
-`frontend-next` provides an authenticated, explicitly gated Column sandbox test flow. The separate customer app has a link-only flow that binds a confirmed Supabase identity to an existing backend account after phone OTP and PIN verification. Wire initiation and tracking are not enabled in that customer app. Do not expose live transfer records or enable live submission until Column account ownership, counterparty controls, and rail/limit details are verified.
+`frontend-next` provides an authenticated, explicitly gated Column sandbox test flow. The separate customer app has a link-only flow that binds a confirmed Supabase identity to an existing backend account after phone OTP and PIN verification. Wire initiation and tracking are not enabled in that customer app. Do not expose transfer records or enable submission until Column account ownership, counterparty controls, sandbox support, and rail/limit details are verified.
 
 The customer app is maintained in a separate repository. Its current availability is shown in the environment banner and service page; it should not be buried as a one-off statement in draft Terms. The legal and compliance pages are drafts and require qualified review before launch.
 
@@ -97,7 +96,7 @@ POST /api/auth/request-otp
 POST /api/auth/request-link-otp
 POST /api/auth/verify-otp
 POST /api/auth/link-customer
-POST /api/auth/signup
+POST /api/auth/signup       # requires and consumes a valid phone OTP
 POST /api/auth/login
 GET  /api/column/transfers
 GET  /api/column/transfers/:id

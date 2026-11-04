@@ -10,6 +10,7 @@ describe('backend config', () => {
     test('uses environment overrides in production and enables Neon/Postgres when configured', () => {
         process.env.NODE_ENV = 'production';
         delete process.env.COLUMN_LIVE_WIRES_ENABLED;
+        delete process.env.CORS_ORIGIN;
         process.env.JWT_SECRET = 'prod-secret';
         process.env.ENCRYPTION_KEY = '12345678901234567890123456789012';
         process.env.SUPABASE_URL = 'https://project.supabase.co';
@@ -27,10 +28,26 @@ describe('backend config', () => {
         expect(config.databaseDriver).toBe('postgres');
         expect(config.databaseUrl).toBe('postgres://user:pass@host/db');
         expect(config.postgresEnabled).toBe(true);
-        expect(config.corsOrigins).toEqual([]);
+        expect(config.corsOrigins).toEqual([
+            'https://vaultexwallet.io',
+            'https://www.vaultexwallet.io',
+        ]);
         expect(config.otpProvider).toBe('twilio');
         expect(config.columnBaseUrl).toBe('https://api.column.com');
         expect(config.columnEnabled).toBe(false);
+    });
+
+    test('preserves configured production CORS origins and includes both Vaultex hosts', () => {
+        process.env.NODE_ENV = 'production';
+        process.env.CORS_ORIGIN = 'https://preview.example.com, https://vaultexwallet.io';
+
+        const config = getBackendConfig();
+
+        expect(config.corsOrigins).toEqual([
+            'https://preview.example.com',
+            'https://vaultexwallet.io',
+            'https://www.vaultexwallet.io',
+        ]);
     });
 
     test('falls back to safe development defaults when values are missing', () => {

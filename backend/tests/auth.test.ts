@@ -15,6 +15,14 @@ describe('Auth and OTP flows', () => {
         await Database.resetAll();
     });
 
+    test('environment status reports the environment and disabled wire state without caching', async () => {
+        const response = await request(app).get('/api/environment');
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ environment: 'development', wireSubmissions: 'disabled' });
+        expect(response.headers['cache-control']).toBe('no-store');
+    });
+
     test('request and verify OTP', async () => {
         const phone = '555-0001';
         const res = await request(app).post('/api/auth/request-otp').send({ phone });
@@ -45,7 +53,7 @@ describe('Auth and OTP flows', () => {
 
         const reusedOtp = await request(app)
             .post('/api/auth/signup')
-            .send({ phone: '555-0022', pin: '1234', code: otp!.code });
+            .send({ phone, pin: '1234', code: otp!.code });
         expect(reusedOtp.status).toBe(401);
     });
 
