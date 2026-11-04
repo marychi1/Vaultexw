@@ -42,11 +42,15 @@ describe('backend config', () => {
         delete process.env.SUPABASE_ANON_KEY;
         delete process.env.DATABASE_DRIVER;
         delete process.env.DATABASE_URL;
+        delete process.env.PORT;
 
         const config = getBackendConfig();
 
-        expect(config.jwtSecret).toMatch(/dev|local/i);
+        expect(config.jwtSecret).toHaveLength(128);
+        expect(config.port).toBe(3002);
+        expect(config.jwtSecretConfigured).toBe(false);
         expect(config.encryptionKey.length).toBeGreaterThanOrEqual(32);
+        expect(config.encryptionKeyConfigured).toBe(false);
         expect(config.supabaseEnabled).toBe(false);
         expect(config.databaseDriver).toBe('file');
         expect(config.postgresEnabled).toBe(false);
@@ -55,14 +59,14 @@ describe('backend config', () => {
         expect(getProductionConfigErrors(config)).toEqual([]);
     });
 
-    test('enables live Column wires only with production opt-in and persistent Column config', () => {
+    test('keeps live Column wires disabled until production approval even when the environment flag is set', () => {
         process.env.NODE_ENV = 'production';
         process.env.JWT_SECRET = 'a'.repeat(64);
         process.env.ENCRYPTION_KEY = 'b'.repeat(64);
         process.env.CORS_ORIGIN = 'https://example.com';
         process.env.COLUMN_LIVE_WIRES_ENABLED = 'true';
         process.env.COLUMN_ENABLED = 'true';
-        process.env.COLUMN_API_KEY = 'column-api-key';
+        process.env.COLUMN_API_KEY = 'live_column_api_key';
         process.env.COLUMN_WEBHOOK_SECRET = 'column-webhook-secret';
         process.env.COLUMN_WEBHOOK_ENDPOINT_ID = 'endpoint-id';
         process.env.DATABASE_DRIVER = 'postgres';
@@ -70,8 +74,90 @@ describe('backend config', () => {
 
         const config = getBackendConfig();
 
-        expect(config.columnLiveWiresEnabled).toBe(true);
-        expect(getProductionConfigErrors(config)).toEqual([]);
+        expect(config.columnLiveWiresEnabled).toBe(false);
+        expect(getProductionConfigErrors(config)).toContain(
+            'Live Column wires remain blocked pending production, compliance, and operational approval',
+        );
+        expect(getProductionConfigErrors(config)).toContain(
+            'COLUMN_WIRE_BANK_ACCOUNT_ID and COLUMN_PLATFORM_ENTITY_ID are required for platform-funded wires',
+        );
+
+        process.env.COLUMN_WIRE_BANK_ACCOUNT_ID = 'bank_account_platform';
+        process.env.COLUMN_PLATFORM_ENTITY_ID = 'entity_platform';
+        const configured = getBackendConfig();
+        expect(configured.columnWireBankAccountId).toBe('bank_account_platform');
+        expect(configured.columnPlatformEntityId).toBe('entity_platform');
+        expect(getProductionConfigErrors(configured)).not.toContain(
+            'COLUMN_WIRE_BANK_ACCOUNT_ID and COLUMN_PLATFORM_ENTITY_ID are required for platform-funded wires',
+        );
+    });
+
+    test('enables sandbox wires only outside production with explicit opt-in and a test key', () => {
+        process.env.NODE_ENV = 'development';
+        process.env.COLUMN_SANDBOX_WIRES_ENABLED = 'true';
+        process.env.COLUMN_ENABLED = 'true';
+        process.env.COLUMN_API_KEY = 'test_sandbox_key';
+        process.env.DATABASE_DRIVER = 'postgres';
+        process.env.DATABASE_URL = 'postgres://host/db';
+
+        expect(getBackendConfig().columnSandboxWiresEnabled).toBe(true);
+
+        process.env.COLUMN_API_KEY = 'live_production_key';
+        expect(getBackendConfig().columnSandboxWiresEnabled).toBe(false);
+
+        process.env.NODE_ENV = 'production';
+        process.env.COLUMN_API_KEY = 'test_sandbox_key';
+        expect(getBackendConfig().columnSandboxWiresEnabled).toBe(false);
+    });
+
+    test('enables customer counterparty creation only outside production with test credentials and PostgreSQL', () => {
+        process.env.NODE_ENV = 'development';
+        process.env.COLUMN_CUSTOMER_COUNTERPARTIES_ENABLED = 'true';
+        process.env.COLUMN_ENABLED = 'true';
+        process.env.COLUMN_API_KEY = 'test_sandbox_key';
+        process.env.DATABASE_DRIVER = 'postgres';
+        process.env.DATABASE_URL = 'postgres://host/db';
+
+        expect(getBackendConfig().columnCustomerCounterpartiesEnabled).toBe(true);
+
+        process.env.NODE_ENV = 'production';
+        process.env.COLUMN_API_KEY = 'live_production_key';
+        expect(getBackendConfig().columnCustomerCounterpartiesEnabled).toBe(false);
+        expect(getProductionConfigErrors()).toContain(
+            'Customer counterparty creation is limited to non-production environments using Column test credentials and PostgreSQL',
+        );
+    });
+
+    test('rejects production startup when strong JWT and encryption secrets are not explicitly configured', () => {
+        process.env.NODE_ENV = 'production';
+        delete process.env.JWT_SECRET;
+        delete process.env.ENCRYPTION_KEY;
+
+        const errors = getProductionConfigErrors(getBackendConfig());
+        expect(errors).toContain('JWT_SECRET must be a strong production secret');
+        expect(errors).toContain('ENCRYPTION_KEY must be a configured key of at least 32 characters');
+    });
+
+    test('rejects example secrets even when they meet minimum lengths', () => {
+        process.env.NODE_ENV = 'production';
+        process.env.JWT_SECRET = `replace-with-a-random-secret-${'x'.repeat(64)}`;
+        process.env.ENCRYPTION_KEY = `replace-with-a-32-byte-random-key-${'x'.repeat(32)}`;
+
+        const errors = getProductionConfigErrors(getBackendConfig());
+        expect(errors).toContain('JWT_SECRET must be a strong production secret');
+        expect(errors).toContain('ENCRYPTION_KEY must be a configured key of at least 32 characters');
+    });
+
+    test('rejects sandbox Column credentials pointed at an unapproved host', () => {
+        process.env.NODE_ENV = 'development';
+        process.env.COLUMN_ENABLED = 'true';
+        process.env.COLUMN_SANDBOX_WIRES_ENABLED = 'true';
+        process.env.COLUMN_API_KEY = 'test_sandbox_key';
+        process.env.COLUMN_BASE_URL = 'https://example.invalid';
+
+        const config = getBackendConfig();
+        expect(config.columnEnabled).toBe(false);
+        expect(config.columnSandboxWiresEnabled).toBe(false);
     });
 
     test('does not require Twilio in production when console OTP is used', () => {

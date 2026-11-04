@@ -4,6 +4,7 @@ import './globals.css';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { isSignedIn } from '@/lib/auth';
+import EnvironmentBanner from '@/components/EnvironmentBanner';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     const [signedIn, setSignedIn] = useState(false);
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <html lang="en">
             <body>
                 <div className="shell">
+                    <EnvironmentBanner />
                     <header className="topbar">
                         <div className="brand" aria-label="Vaultex home">
                             <span className="brand-mark" aria-hidden="true" />
