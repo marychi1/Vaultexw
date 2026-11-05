@@ -6,7 +6,8 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc",
-    "test": "jest --runInBand --detectOpenHandles"
+    "test": "jest --runInBand --detectOpenHandles",
+    "test:postgres": "jest --runInBand --detectOpenHandles --runTestsByPath tests/auth.test.ts"
   },
   "dependencies": {
     "@types/pg": "^8.23.1",

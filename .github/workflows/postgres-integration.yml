@@ -1,0 +1,48 @@
+name: PostgreSQL integration tests
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/postgres-integration.yml'
+  push:
+    branches:
+      - main
+      - 'fix/postgres-auth-integration-tests'
+
+jobs:
+  postgres-auth-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: vaultex_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d vaultex_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      NODE_ENV: test
+      DATABASE_DRIVER: postgres
+      POSTGRES_INTEGRATION_TESTS: 'true'
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/vaultex_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Build backend
+        run: npm run build
+      - name: Run authentication suite against PostgreSQL
+        run: npm run test:postgres

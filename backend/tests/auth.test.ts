@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import app from '../src/index';
 import Database from '../src/services/database';
 import AuthService from '../src/services/authService';
+import PostgresService from '../src/services/postgresService';
 
 async function signupWithOtp(payload: { phone: string; [key: string]: unknown }) {
     await request(app).post('/api/auth/request-otp').send({ phone: payload.phone }).expect(200);
@@ -12,6 +13,12 @@ async function signupWithOtp(payload: { phone: string; [key: string]: unknown })
 }
 
 describe('Auth and OTP flows', () => {
+    if (process.env.POSTGRES_INTEGRATION_TESTS === 'true') {
+        test('runs against PostgreSQL rather than the file-backed test adapter', () => {
+            expect(Database.getPersistenceMode()).toBe('postgres');
+        });
+    }
+
     beforeEach(async () => {
         await Database.resetAll();
     });
@@ -291,6 +298,36 @@ describe('Auth and OTP flows', () => {
         expect(reuse.status).toBe(401);
         expect(reuse.body.error).toMatch(/already associated/i);
     });
+
+    if (process.env.POSTGRES_INTEGRATION_TESTS === 'true') {
+        test('global device-ID migration refuses existing cross-account duplicates', async () => {
+            const pool = PostgresService.getPool();
+            if (!pool) throw new Error('PostgreSQL pool is not configured');
+
+            const userIds = ['migration-duplicate-user-a', 'migration-duplicate-user-b'];
+            try {
+                await PostgresService.ensureSchema();
+                await pool.query('DROP INDEX IF EXISTS devices_device_id_unique_idx');
+                for (let i = 0; i < userIds.length; i++) {
+                    await pool.query(
+                        'INSERT INTO users (id, phone, pin_hash, wallet_address, encrypted_private_key) VALUES ($1, $2, $3, NULL, NULL)',
+                        [userIds[i], `+1555999000${i}`, 'test-hash']
+                    );
+                    await pool.query(
+                        'INSERT INTO devices (id, user_id, device_id, device_name, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5, $6)',
+                        [`migration-duplicate-device-${i}`, userIds[i], 'legacy-shared-device-id', 'migration test', '127.0.0.1', 'jest']
+                    );
+                }
+
+                (PostgresService as unknown as { schemaPromise: Promise<boolean> | null }).schemaPromise = null;
+                await expect(PostgresService.ensureSchema()).resolves.toBe(false);
+            } finally {
+                await pool.query('DELETE FROM users WHERE id = ANY($1::text[])', [userIds]);
+                (PostgresService as unknown as { schemaPromise: Promise<boolean> | null }).schemaPromise = null;
+                await expect(PostgresService.ensureSchema()).resolves.toBe(true);
+            }
+        });
+    }
 
     test('concurrent cross-account device registration allows only one owner', async () => {
         const firstUser = await signupWithOtp({
