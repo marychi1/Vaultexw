@@ -149,6 +149,17 @@ class PostgresService {
         ALTER TABLE column_wire_transfers ALTER COLUMN reference SET NOT NULL;
         ALTER TABLE column_wire_transfers ALTER COLUMN recipient_name SET NOT NULL;
 
+        DO $
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM devices
+            GROUP BY device_id
+            HAVING COUNT(*) > 1
+          ) THEN
+            RAISE EXCEPTION 'Duplicate device_id values exist; reconcile device ownership before applying global uniqueness';
+          END IF;
+        END $;
+        CREATE UNIQUE INDEX IF NOT EXISTS devices_device_id_unique_idx ON devices(device_id);
         CREATE INDEX IF NOT EXISTS devices_user_id_idx ON devices(user_id);
         CREATE INDEX IF NOT EXISTS notifications_user_id_timestamp_idx ON notifications(user_id, timestamp DESC);
         CREATE INDEX IF NOT EXISTS otps_phone_expires_at_idx ON otps(phone, expires_at DESC);
