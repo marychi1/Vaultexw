@@ -48,7 +48,7 @@ export function getBackendConfig(): BackendConfig {
     if (postgresIntegrationTests) {
         let databaseName = '';
         try {
-            databaseName = databaseUrl ? decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\\//, '')) : '';
+            databaseName = databaseUrl ? decodeURIComponent(new URL(databaseUrl).pathname.slice(1)) : '';
         } catch {
             throw new Error('PostgreSQL integration tests require a valid DATABASE_URL for a dedicated test database');
         }
