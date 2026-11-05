@@ -35,6 +35,28 @@ export interface ColumnWireTransferInput {
     description?: string;
 }
 
+export interface ColumnCustomerCounterpartyRecord {
+    userId: string;
+    requestFingerprint: string;
+    counterpartyId: string | null;
+    displayName: string;
+    accountLast4: string;
+    status: 'PENDING' | 'ACTIVE' | 'UNKNOWN';
+    createdAt: Date;
+}
+
+export interface ColumnCustomerCounterpartyInput {
+    userId: string;
+    requestFingerprint: string;
+    displayName: string;
+    accountLast4: string;
+}
+
+export interface ColumnCustomerCounterpartyReservation {
+    record: ColumnCustomerCounterpartyRecord;
+    created: boolean;
+}
+
 export class ColumnWireIdempotencyConflictError extends Error {
     constructor() {
         super('Idempotency-Key was already used for a different wire request.');
@@ -729,6 +751,111 @@ class Database {
         }
     }
 
+    static async reserveColumnCustomerCounterparty(
+        input: ColumnCustomerCounterpartyInput
+    ): Promise<ColumnCustomerCounterpartyReservation> {
+        const pool = await this.postgresReady();
+        if (!pool) {
+            throw new Error('Persistent PostgreSQL is required for customer beneficiary storage.');
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const inserted = await client.query(`
+                INSERT INTO column_customer_counterparties (
+                    user_id, request_fingerprint, display_name, account_last4, status
+                )
+                VALUES ($1,$2,$3,$4,'PENDING')
+                ON CONFLICT (user_id, request_fingerprint) DO NOTHING
+                RETURNING request_fingerprint
+            `, [input.userId, input.requestFingerprint, input.displayName, input.accountLast4]);
+
+            const result = await client.query(`
+                SELECT * FROM column_customer_counterparties
+                WHERE user_id = $1 AND request_fingerprint = $2
+                FOR UPDATE
+            `, [input.userId, input.requestFingerprint]);
+            const row = result.rows[0];
+            if (!row) throw new Error('Unable to persist beneficiary creation request.');
+
+            await client.query('COMMIT');
+            return {
+                record: this.mapColumnCustomerCounterparty(row),
+                created: inserted.rowCount === 1,
+            };
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    static async activateColumnCustomerCounterparty(
+        userId: string,
+        requestFingerprint: string,
+        counterpartyId: string
+    ): Promise<void> {
+        const pool = await this.postgresReady();
+        if (!pool) {
+            throw new Error('Persistent PostgreSQL is required for customer beneficiary storage.');
+        }
+        const result = await pool.query(`
+            UPDATE column_customer_counterparties
+            SET counterparty_id = $3, status = 'ACTIVE'
+            WHERE user_id = $1 AND request_fingerprint = $2 AND status = 'PENDING'
+        `, [userId, requestFingerprint, counterpartyId]);
+        if (result.rowCount !== 1) {
+            throw new Error('Beneficiary creation could not be linked to its owner.');
+        }
+    }
+
+    static async markColumnCustomerCounterpartyUnknown(
+        userId: string,
+        requestFingerprint: string
+    ): Promise<void> {
+        const pool = await this.postgresReady();
+        if (!pool) {
+            throw new Error('Persistent PostgreSQL is required for customer beneficiary storage.');
+        }
+        await pool.query(`
+            UPDATE column_customer_counterparties
+            SET status = 'UNKNOWN'
+            WHERE user_id = $1 AND request_fingerprint = $2 AND status = 'PENDING'
+        `, [userId, requestFingerprint]);
+    }
+
+    static async getColumnCustomerCounterpartyForUser(
+        userId: string,
+        counterpartyId: string
+    ): Promise<ColumnCustomerCounterpartyRecord | undefined> {
+        const pool = await this.postgresReady();
+        if (!pool) {
+            throw new Error('Persistent PostgreSQL is required for customer beneficiary storage.');
+        }
+        const result = await pool.query(`
+            SELECT * FROM column_customer_counterparties
+            WHERE user_id = $1 AND counterparty_id = $2 AND status = 'ACTIVE'
+        `, [userId, counterpartyId]);
+        return result.rows[0] ? this.mapColumnCustomerCounterparty(result.rows[0]) : undefined;
+    }
+
+    static async listColumnCustomerCounterpartiesForUser(
+        userId: string
+    ): Promise<ColumnCustomerCounterpartyRecord[]> {
+        const pool = await this.postgresReady();
+        if (!pool) {
+            throw new Error('Persistent PostgreSQL is required for customer beneficiary storage.');
+        }
+        const result = await pool.query(`
+            SELECT * FROM column_customer_counterparties
+            WHERE user_id = $1 AND status = 'ACTIVE'
+            ORDER BY created_at DESC
+        `, [userId]);
+        return result.rows.map((row) => this.mapColumnCustomerCounterparty(row));
+    }
+
     static async markColumnWireSubmissionUnknown(idempotencyKey: string, errorCode: string): Promise<void> {
         const pool = await this.postgresReady();
         if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
@@ -797,6 +924,20 @@ class Database {
             createdAt: this.hydrateDate(row.created_at) as Date,
             updatedAt: this.hydrateDate(row.updated_at) as Date,
             lastReconciledAt: this.hydrateDate(row.last_reconciled_at) as Date | null,
+        };
+    }
+
+    private static mapColumnCustomerCounterparty(
+        row: Record<string, any>
+    ): ColumnCustomerCounterpartyRecord {
+        return {
+            userId: row.user_id,
+            requestFingerprint: row.request_fingerprint,
+            counterpartyId: row.counterparty_id,
+            displayName: row.display_name,
+            accountLast4: row.account_last4,
+            status: row.status,
+            createdAt: this.hydrateDate(row.created_at) as Date,
         };
     }
 

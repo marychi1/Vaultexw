@@ -1,6 +1,6 @@
 name: Create/Delete Neon Branch for Pull Request
 
-on:
+"on":
   pull_request:
     types:
       - opened

@@ -158,8 +158,115 @@ describe('Auth and OTP flows', () => {
         expect(disabled.body.error).toMatch(/disabled/i);
     });
 
+    test('sandbox wire creation requires explicit sandbox configuration and never accepts a live key', async () => {
+        const signup = await signupWithOtp({ phone: '555-0011', pin: '1234', deviceId: 'dev11', deviceName: 'test' });
+
+        const sandboxPath = '/api/column/transfers/wire/sandbox';
+        const authorization = `Bearer ${signup.body.token}`;
+        const payload = {
+            amount: 100,
+            currencyCode: 'USD',
+            recipientName: 'Test Recipient',
+            bankAccountId: 'bacc_test',
+            counterpartyId: 'cpty_test',
+            pin: '1234',
+        };
+
+        const disabled = await request(app)
+            .post(sandboxPath)
+            .set('Authorization', authorization)
+            .set('Idempotency-Key', 'idem_sandbox_123456')
+            .send(payload);
+        expect(disabled.status).toBe(503);
+        expect(disabled.body.error).toMatch(/sandbox.*disabled/i);
+
+        const previousNodeEnv = process.env.NODE_ENV;
+        const previousSandboxFlag = process.env.COLUMN_SANDBOX_WIRES_ENABLED;
+        const previousColumnFlag = process.env.COLUMN_ENABLED;
+        const previousApiKey = process.env.COLUMN_API_KEY;
+        try {
+            process.env.COLUMN_SANDBOX_WIRES_ENABLED = 'true';
+            process.env.COLUMN_ENABLED = 'true';
+            process.env.COLUMN_API_KEY = 'test_sandbox_key';
+            const sandbox = await request(app)
+                .post(sandboxPath)
+                .set('Authorization', authorization)
+                .set('Idempotency-Key', 'idem_sandbox_123457')
+                .send(payload);
+            expect(sandbox.status).toBe(503);
+            expect(sandbox.body.error).toMatch(/sandbox.*disabled|persistent.*tracking/i);
+
+            process.env.COLUMN_API_KEY = 'live_production_key';
+            const liveKey = await request(app)
+                .post(sandboxPath)
+                .set('Authorization', authorization)
+                .set('Idempotency-Key', 'idem_sandbox_123458')
+                .send(payload);
+            expect(liveKey.status).toBe(503);
+            expect(liveKey.body.error).toMatch(/sandbox.*disabled/i);
+        } finally {
+            if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+            else process.env.NODE_ENV = previousNodeEnv;
+            if (previousSandboxFlag === undefined) delete process.env.COLUMN_SANDBOX_WIRES_ENABLED;
+            else process.env.COLUMN_SANDBOX_WIRES_ENABLED = previousSandboxFlag;
+            if (previousColumnFlag === undefined) delete process.env.COLUMN_ENABLED;
+            else process.env.COLUMN_ENABLED = previousColumnFlag;
+            if (previousApiKey === undefined) delete process.env.COLUMN_API_KEY;
+            else process.env.COLUMN_API_KEY = previousApiKey;
+        }
+    });
+
+    test('environment status distinguishes app environment from transfer availability', async () => {
+        const previousNodeEnv = process.env.NODE_ENV;
+        const previousSandboxFlag = process.env.COLUMN_SANDBOX_WIRES_ENABLED;
+        const previousColumnFlag = process.env.COLUMN_ENABLED;
+        const previousApiKey = process.env.COLUMN_API_KEY;
+        const previousBaseUrl = process.env.COLUMN_BASE_URL;
+        const previousDatabaseDriver = process.env.DATABASE_DRIVER;
+        const previousDatabaseUrl = process.env.DATABASE_URL;
+        try {
+            process.env.NODE_ENV = 'development';
+            process.env.COLUMN_SANDBOX_WIRES_ENABLED = 'true';
+            process.env.COLUMN_ENABLED = 'true';
+            process.env.COLUMN_API_KEY = 'test_sandbox_key';
+            process.env.COLUMN_BASE_URL = 'https://api.column.com';
+            process.env.DATABASE_DRIVER = 'postgres';
+            process.env.DATABASE_URL = 'postgres://host/db';
+
+            const sandbox = await request(app).get('/api/environment').expect(200);
+            expect(sandbox.body).toEqual({ environment: 'development', wireSubmissions: 'sandbox' });
+
+            process.env.COLUMN_API_KEY = 'live_production_key';
+            const restricted = await request(app).get('/api/environment').expect(200);
+            expect(restricted.body).toEqual({ environment: 'development', wireSubmissions: 'disabled' });
+
+            process.env.NODE_ENV = 'staging';
+            const staging = await request(app).get('/api/environment').expect(200);
+            expect(staging.body).toEqual({ environment: 'staging', wireSubmissions: 'disabled' });
+
+            process.env.NODE_ENV = 'production';
+            const production = await request(app).get('/api/environment').expect(200);
+            expect(production.body).toEqual({ environment: 'production', wireSubmissions: 'disabled' });
+        } finally {
+            if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+            else process.env.NODE_ENV = previousNodeEnv;
+            if (previousSandboxFlag === undefined) delete process.env.COLUMN_SANDBOX_WIRES_ENABLED;
+            else process.env.COLUMN_SANDBOX_WIRES_ENABLED = previousSandboxFlag;
+            if (previousColumnFlag === undefined) delete process.env.COLUMN_ENABLED;
+            else process.env.COLUMN_ENABLED = previousColumnFlag;
+            if (previousApiKey === undefined) delete process.env.COLUMN_API_KEY;
+            else process.env.COLUMN_API_KEY = previousApiKey;
+            if (previousBaseUrl === undefined) delete process.env.COLUMN_BASE_URL;
+            else process.env.COLUMN_BASE_URL = previousBaseUrl;
+            if (previousDatabaseDriver === undefined) delete process.env.DATABASE_DRIVER;
+            else process.env.DATABASE_DRIVER = previousDatabaseDriver;
+            if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+            else process.env.DATABASE_URL = previousDatabaseUrl;
+        }
+    });
+
     test('Column webhook verifies signatures and ignores duplicate events', async () => {
-        process.env.COLUMN_API_KEY = 'test-column-key';
+        process.env.COLUMN_API_KEY = 'test_column_key';
         process.env.COLUMN_WEBHOOK_SECRET = 'test-webhook-secret';
         process.env.COLUMN_WEBHOOK_ENDPOINT_ID = 'whep_test';
         process.env.COLUMN_ENABLED = 'true';
@@ -318,7 +425,7 @@ describe('Auth and OTP flows', () => {
 
     test('wallet send is disabled for all requests', async () => {
         const phone = '555-0009';
-        const signup = await signupWithOtp({ phone: '555-0009', pin: '1234', walletAddress: '0xwallet-9', encryptedPrivateKey: 'enc', deviceId: 'dev9', deviceName: 'test' });
+        const signup = await signupWithOtp({ phone, pin: '1234', walletAddress: '0xwallet-9', encryptedPrivateKey: 'enc', deviceId: 'dev9', deviceName: 'test' });
 
         expect(signup.status).toBe(201);
         const invalidAddress = await request(app)

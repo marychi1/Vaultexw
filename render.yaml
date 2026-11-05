@@ -36,5 +36,17 @@ services:
         sync: false
       - key: COLUMN_ENABLED
         value: "false"
+      - key: COLUMN_API_KEY
+        sync: false
+      - key: COLUMN_BASE_URL
+        value: https://api.column.com
+      - key: COLUMN_WEBHOOK_SECRET
+        sync: false
+      - key: COLUMN_WEBHOOK_ENDPOINT_ID
+        sync: false
+      - key: COLUMN_CUSTOMER_COUNTERPARTIES_ENABLED
+        value: "false"
+      - key: COLUMN_SANDBOX_WIRES_ENABLED
+        value: "false"
       - key: COLUMN_LIVE_WIRES_ENABLED
         value: "false"

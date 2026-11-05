@@ -11,6 +11,12 @@ import Database, { ColumnWireIdempotencyConflictError } from './services/databas
 import WebAuthnService from './services/webauthnService';
 import PostgresService from './services/postgresService';
 import ColumnService from './services/columnService';
+import {
+  getCustomerCounterpartyFingerprint,
+  isVerifiedColumnCounterparty,
+  isVerifiedPlatformBankAccount,
+  parseCustomerCounterpartyInput,
+} from './services/columnCounterpartyValidation';
 import SupabaseAuthService from './services/supabaseAuthService';
 import { toColumnWireReceipt } from './services/columnWireReceipt';
 import { getBackendConfig, getProductionConfigErrors } from './config';
@@ -79,7 +85,11 @@ app.get('/api/environment', (_req: Request, res: Response) => {
   const environment = config.nodeEnv === 'production'
     ? 'production'
     : config.nodeEnv === 'staging' ? 'staging' : 'development';
-  const wireSubmissions = config.columnEnabled && config.columnLiveWiresEnabled ? 'live' : 'disabled';
+  const wireSubmissions = config.columnSandboxWiresEnabled
+    ? 'sandbox'
+    : config.columnLiveWiresEnabled
+      ? 'live'
+      : 'disabled';
 
   res.setHeader('Cache-Control', 'no-store');
   return res.json({ environment, wireSubmissions });
@@ -99,6 +109,14 @@ const columnWireLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many wire attempts. Try again later.' },
+});
+
+const columnCounterpartyLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many beneficiary requests. Try again later.' },
 });
 
 // Don't apply rate limiter during automated tests
@@ -276,6 +294,138 @@ app.get('/api/auth/customer-link', async (req: Request, res: Response) => {
   }
 });
 
+async function getLinkedBackendUserId(accessToken: string): Promise<string | null> {
+  const customer = await SupabaseAuthService.getCustomer(accessToken);
+  if (!customer?.emailConfirmedAt) return null;
+  const user = await Database.getUserBySupabaseId(customer.id);
+  return user?.id || null;
+}
+
+function getBearerAccessToken(req: Request): string | undefined {
+  return req.header('Authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+}
+
+app.get('/api/auth/customer-counterparties', async (req: Request, res: Response) => {
+  const config = getBackendConfig();
+  if (!config.columnCustomerCounterpartiesEnabled) {
+    return res.status(503).json({ error: 'Sandbox beneficiary management is not enabled' });
+  }
+
+  const accessToken = getBearerAccessToken(req);
+  if (!accessToken) return res.status(401).json({ error: 'Supabase sign-in is required' });
+
+  try {
+    const userId = await getLinkedBackendUserId(accessToken);
+    if (!userId) return res.status(403).json({ error: 'Link a verified customer account before managing beneficiaries' });
+    const counterparties = await Database.listColumnCustomerCounterpartiesForUser(userId);
+    return res.json({
+      counterparties: counterparties.map((counterparty) => ({
+        id: counterparty.counterpartyId,
+        name: counterparty.displayName,
+        accountLast4: counterparty.accountLast4,
+        createdAt: counterparty.createdAt.toISOString(),
+      })),
+    });
+  } catch (error) {
+    console.error('[Column] Customer beneficiary list failed:', error);
+    return res.status(503).json({ error: 'Beneficiary service is unavailable' });
+  }
+});
+
+app.post(
+  '/api/auth/customer-counterparties',
+  columnCounterpartyLimiter,
+  async (req: Request, res: Response) => {
+    const config = getBackendConfig();
+    if (!config.columnCustomerCounterpartiesEnabled) {
+      return res.status(503).json({ error: 'Sandbox beneficiary management is not enabled' });
+    }
+
+    const accessToken = getBearerAccessToken(req);
+    if (!accessToken) return res.status(401).json({ error: 'Supabase sign-in is required' });
+
+    const input = parseCustomerCounterpartyInput(req.body);
+    if (!input) {
+      return res.status(400).json({
+        error: 'Provide a beneficiary name, valid US bank account and routing numbers, account type, and US mailing address',
+      });
+    }
+
+    try {
+      const userId = await getLinkedBackendUserId(accessToken);
+      if (!userId) return res.status(403).json({ error: 'Link a verified customer account before managing beneficiaries' });
+
+      const requestFingerprint = getCustomerCounterpartyFingerprint(input, config.encryptionKey);
+      const reservation = await Database.reserveColumnCustomerCounterparty({
+        userId,
+        requestFingerprint,
+        displayName: input.name,
+        accountLast4: input.account_number.slice(-4),
+      });
+
+      if (reservation.record.status === 'ACTIVE' && reservation.record.counterpartyId) {
+        return res.status(200).json({
+          counterparty: {
+            id: reservation.record.counterpartyId,
+            name: reservation.record.displayName,
+            accountLast4: reservation.record.accountLast4,
+            createdAt: reservation.record.createdAt.toISOString(),
+          },
+        });
+      }
+      if (!reservation.created) {
+        return res.status(409).json({
+          error: 'This beneficiary request is pending reconciliation; contact support before trying again',
+        });
+      }
+
+      let counterpartyId: string;
+      try {
+        const created = await ColumnService.createCounterparty(input);
+        if (typeof created.id !== 'string' || !created.id) {
+          throw new Error('Column returned no counterparty ID');
+        }
+        const verified = await ColumnService.getCounterparty(created.id);
+        if (!isVerifiedColumnCounterparty(verified, input)) {
+          throw new Error('Column counterparty verification did not match the submitted details');
+        }
+        counterpartyId = verified.id;
+      } catch (error) {
+        await Database.markColumnCustomerCounterpartyUnknown(userId, requestFingerprint);
+        console.error('[Column] Beneficiary creation requires reconciliation:', error);
+        return res.status(502).json({
+          error: 'Column could not confirm the beneficiary. Contact support before retrying',
+        });
+      }
+
+      try {
+        await Database.activateColumnCustomerCounterparty(userId, requestFingerprint, counterpartyId);
+      } catch (error) {
+        await Database.markColumnCustomerCounterpartyUnknown(userId, requestFingerprint);
+        console.error('[Column] Verified beneficiary could not be linked to its owner:', {
+          userId,
+          counterpartyId,
+          error,
+        });
+        return res.status(503).json({
+          error: 'Beneficiary was created but could not be linked safely; contact support before retrying',
+        });
+      }
+
+      return res.status(201).json({
+        counterparty: {
+          id: counterpartyId,
+          name: input.name,
+          accountLast4: input.account_number.slice(-4),
+        },
+      });
+    } catch (error) {
+      console.error('[Column] Customer beneficiary creation failed:', error);
+      return res.status(503).json({ error: 'Beneficiary service is unavailable' });
+    }
+  }
+);
+
 // ===== PIN Verification (for quick checks) =====
 app.post('/api/auth/verify-pin', async (req: Request, res: Response) => {
   const { phone, pin } = req.body;
@@ -452,22 +602,40 @@ app.get('/api/column/transfers/:id', authMiddleware, async (req: AuthRequest, re
   }
 });
 
-app.post('/api/column/transfers/wire', authMiddleware, columnWireLimiter, async (req: AuthRequest, res: Response) => {
+app.post(['/api/column/transfers/wire', '/api/column/transfers/wire/sandbox'], authMiddleware, columnWireLimiter, async (req: AuthRequest, res: Response) => {
   const config = getBackendConfig();
-  const { amount, currencyCode, recipientName, bankAccountId, counterpartyId, description, pin } = req.body;
+  const sandboxRequest = req.path.endsWith('/sandbox');
+  const {
+    amount,
+    currencyCode,
+    recipientName: submittedRecipientName,
+    bankAccountId: submittedBankAccountId,
+    counterpartyId,
+    description,
+    pin,
+  } = req.body;
+  const bankAccountId = sandboxRequest ? submittedBankAccountId : config.columnWireBankAccountId;
   const idempotencyKey = req.header('Idempotency-Key');
   const numericAmount = typeof amount === 'number' || typeof amount === 'string' ? Number(amount) : NaN;
+  let recipientName = '';
 
   if (!Number.isSafeInteger(numericAmount) || numericAmount <= 0) {
     return res.status(400).json({ error: 'Amount must be a positive integer in cents' });
   }
   if (currencyCode !== 'USD' ||
-      typeof bankAccountId !== 'string' || bankAccountId.length === 0 ||
       typeof counterpartyId !== 'string' || counterpartyId.length === 0) {
-    return res.status(400).json({ error: 'USD currency, bank account, and counterparty are required' });
+    return res.status(400).json({ error: 'USD currency and counterparty are required' });
   }
-  if (typeof recipientName !== 'string' || !recipientName.trim() || recipientName.trim().length > 100) {
-    return res.status(400).json({ error: 'Recipient name is required and must be 100 characters or fewer' });
+  if (sandboxRequest && (typeof bankAccountId !== 'string' || bankAccountId.length === 0)) {
+    return res.status(400).json({ error: 'A sandbox bank account is required' });
+  }
+  if (sandboxRequest) {
+    if (typeof submittedRecipientName !== 'string' ||
+        !submittedRecipientName.trim() ||
+        submittedRecipientName.trim().length > 100) {
+      return res.status(400).json({ error: 'Recipient name is required and must be 100 characters or fewer' });
+    }
+    recipientName = submittedRecipientName.trim();
   }
   if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 255) {
     return res.status(400).json({ error: 'An Idempotency-Key header between 16 and 255 characters is required' });
@@ -475,8 +643,40 @@ app.post('/api/column/transfers/wire', authMiddleware, columnWireLimiter, async 
   if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) {
     return res.status(400).json({ error: 'A valid PIN is required' });
   }
-  if (!config.columnLiveWiresEnabled) {
+  if (sandboxRequest && !config.columnSandboxWiresEnabled) {
+    return res.status(503).json({ error: 'Column sandbox wire submissions are disabled or not safely configured' });
+  }
+  if (!sandboxRequest && !config.columnLiveWiresEnabled) {
     return res.status(503).json({ error: 'Live Column wire submissions are disabled' });
+  }
+  if (!sandboxRequest) {
+    if (!bankAccountId) {
+      return res.status(503).json({ error: 'The platform funding account is not configured' });
+    }
+    try {
+      const ownedCounterparty = await Database.getColumnCustomerCounterpartyForUser(
+        req.userId!,
+        counterpartyId
+      );
+      if (!ownedCounterparty) {
+        return res.status(403).json({ error: 'This beneficiary is not available to your account' });
+      }
+      recipientName = ownedCounterparty.displayName;
+      if (!config.columnPlatformEntityId) {
+        return res.status(503).json({ error: 'The platform funding account ownership is not configured' });
+      }
+      const bankAccount = await ColumnService.getBankAccount(bankAccountId);
+      if (!isVerifiedPlatformBankAccount(
+        bankAccount,
+        bankAccountId,
+        config.columnPlatformEntityId
+      )) {
+        return res.status(503).json({ error: 'The configured funding account is not an open USD account owned by the platform' });
+      }
+    } catch (error) {
+      console.error('[Column] Beneficiary ownership check failed:', error);
+      return res.status(503).json({ error: 'Beneficiary ownership could not be verified' });
+    }
   }
   if (!config.postgresEnabled) {
     return res.status(503).json({ error: 'Persistent Column wire tracking is unavailable' });
@@ -603,9 +803,9 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 
 if (require.main === module) {
   const config = getBackendConfig();
-  const productionErrors = getProductionConfigErrors(config);
-  if (productionErrors.length > 0) {
-    console.error(`Production configuration invalid:\n- ${productionErrors.join('\n- ')}`);
+  const configurationErrors = getProductionConfigErrors(config);
+  if (configurationErrors.length > 0) {
+    console.error(`Backend configuration invalid:\n- ${configurationErrors.join('\n- ')}`);
     process.exit(1);
   }
 

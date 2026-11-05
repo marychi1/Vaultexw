@@ -1,14 +1,86 @@
-const DEFAULT_API_BASE_URL = 'http://localhost:3000';
-
-function resolveApiBaseUrl() {
+export function getApiBaseUrl() {
     const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-    return configuredUrl || DEFAULT_API_BASE_URL;
+    const rawUrl = configuredUrl || (process.env.NODE_ENV === 'development' ? 'http://localhost:3002' : '');
+    if (!rawUrl) {
+        throw new Error('NEXT_PUBLIC_API_URL must point to the deployed VAULTEX backend.');
+    }
+
+    let url: URL;
+    try {
+        url = new URL(rawUrl);
+    } catch {
+        throw new Error('NEXT_PUBLIC_API_URL must be a valid backend origin.');
+    }
+
+    const localDevelopmentUrl =
+        process.env.NODE_ENV === 'development' &&
+        url.protocol === 'http:' &&
+        ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+
+    if (
+        url.username ||
+        url.password ||
+        url.pathname !== '/' ||
+        url.search ||
+        url.hash ||
+        (url.protocol !== 'https:' && !localDevelopmentUrl)
+    ) {
+        throw new Error('NEXT_PUBLIC_API_URL must be an HTTPS backend origin (HTTP is allowed for local development).');
+    }
+
+    return url.origin;
 }
 
-const API_BASE_URL = resolveApiBaseUrl();
+export type SandboxWireInput = {
+    amount: number;
+    currencyCode: 'USD';
+    recipientName: string;
+    bankAccountId: string;
+    counterpartyId: string;
+    description?: string;
+    pin: string;
+};
+
+export type SandboxWireReceipt = {
+    reference: string;
+    status: string;
+    amount: number;
+    currencyCode: string;
+    recipient: { name: string };
+    submittedAt: string;
+    statusNote: string;
+};
+
+export async function submitSandboxWire(
+    input: SandboxWireInput,
+    idempotencyKey: string,
+) {
+    const token = typeof window === 'undefined' ? null : localStorage.getItem('vaultex-token');
+    if (!token) throw new Error('Sign in before submitting a sandbox wire.');
+
+    const response = await fetch(`${getApiBaseUrl()}/api/column/transfers/wire/sandbox`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(input),
+        cache: 'no-store',
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = new Error(result.error || 'Sandbox wire submission failed.');
+        Object.assign(error, { status: response.status });
+        throw error;
+    }
+
+    return result as SandboxWireReceipt;
+}
 
 export async function requestOtp(phone: string) {
-    const response = await fetch(`${API_BASE_URL}/api/auth/request-otp`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/auth/request-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
@@ -20,7 +92,7 @@ export async function requestOtp(phone: string) {
 }
 
 export async function verifyOtp(phone: string, code: string) {
-    const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, code }),
@@ -32,7 +104,7 @@ export async function verifyOtp(phone: string, code: string) {
 }
 
 export async function loginUser(phone: string, pin: string, deviceName = 'Web Browser') {
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, pin, deviceId: `next-${Date.now()}`, deviceName }),
@@ -44,7 +116,7 @@ export async function loginUser(phone: string, pin: string, deviceName = 'Web Br
 }
 
 export async function signupUser(phone: string, pin: string, code: string) {
-    const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
