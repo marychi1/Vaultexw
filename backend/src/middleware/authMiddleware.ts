@@ -20,7 +20,7 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
     }
 
     const device = await Database.getDeviceById(decoded.deviceId);
-    if (!device || !device.authorized) {
+    if (!device || !device.authorized || device.userId !== decoded.userId) {
         return res.status(403).json({ error: 'Device access revoked or unauthorized' });
     }
 
