@@ -159,6 +159,9 @@ class AuthService {
             };
             await Database.createDevice(device);
         } else {
+            if (device.userId !== user.id) {
+                throw new Error('Device is already associated with another account');
+            }
             if (!device.authorized) {
                 throw new Error('Device access revoked');
             }
