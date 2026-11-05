@@ -284,13 +284,14 @@ app.post('/api/auth/verify-pin', async (req: Request, res: Response) => {
   }
 
   try {
-    const user = await Database.getUserByPhone(phone);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const ok = await AuthService.verifyPIN(pin, user.pinHash);
-    if (!ok) return res.status(401).json({ error: 'Invalid PIN' });
-
-    return res.json({ verified: true });
+    try {
+      const ok = await AuthService.verifyPINWithLockout(phone, pin);
+      if (!ok) return res.status(401).json({ error: 'Invalid PIN' });
+      return res.json({ verified: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'PIN verification failed';
+      return res.status(message === 'PIN locked. Try later' ? 423 : 500).json({ error: message });
+    }
   } catch (err) {
     return res.status(500).json({ error: 'PIN verification failed' });
   }
