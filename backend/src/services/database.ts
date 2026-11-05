@@ -541,14 +541,16 @@ class Database {
         return notification;
     }
 
-    static async markNotificationAsRead(id: string): Promise<LoginNotification | undefined> {
+    static async markNotificationAsRead(id: string, userId: string): Promise<LoginNotification | undefined> {
         const pool = await this.postgresReady();
         if (pool) {
-            await pool.query('UPDATE notifications SET read = TRUE WHERE id = $1', [id]);
-            const result = await pool.query('SELECT * FROM notifications WHERE id = $1', [id]);
+            const result = await pool.query(
+                'UPDATE notifications SET read = TRUE WHERE id = $1 AND user_id = $2 RETURNING *',
+                [id, userId]
+            );
             return result.rows[0] ? this.mapNotification(result.rows[0]) : undefined;
         }
-        const notification = this.notifications.find((entry) => entry.id === id);
+        const notification = this.notifications.find((entry) => entry.id === id && entry.userId === userId);
         if (notification) {
             notification.read = true;
             this.persist();
@@ -926,6 +928,7 @@ class Database {
     ): Promise<void> {
         const pool = await this.postgresReady();
         if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        const nextStatus = status.toUpperCase();
         await pool.query(`
             UPDATE column_wire_transfers
             SET status = $1, updated_at = NOW(), last_reconciled_at = NOW(),
@@ -933,9 +936,33 @@ class Database {
             WHERE transfer_id = $2
               AND (
                 status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
-                OR $1 = 'RETURNED'
+                OR ($1 = 'RETURNED' AND status <> 'RETURNED')
               )
-        `, [status.toUpperCase(), transferId]);
+              AND (
+                status IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                OR CASE status
+                    WHEN 'SUBMISSION_PENDING' THEN 0
+                    WHEN 'SUBMISSION_IN_PROGRESS' THEN 1
+                    WHEN 'INITIATED' THEN 2
+                    WHEN 'HOLD' THEN 3
+                    WHEN 'PRE_REVIEW' THEN 3
+                    WHEN 'MANUAL_REVIEW' THEN 3
+                    WHEN 'SUBMITTED' THEN 4
+                    ELSE -1
+                   END <= CASE $1
+                    WHEN 'INITIATED' THEN 2
+                    WHEN 'HOLD' THEN 3
+                    WHEN 'PRE_REVIEW' THEN 3
+                    WHEN 'MANUAL_REVIEW' THEN 3
+                    WHEN 'SUBMITTED' THEN 4
+                    WHEN 'COMPLETED' THEN 5
+                    WHEN 'REJECTED' THEN 5
+                    WHEN 'CANCELED' THEN 5
+                    WHEN 'RETURNED' THEN 6
+                    ELSE -1
+                   END
+              )
+        `, [nextStatus, transferId]);
     }
 
     private static mapColumnWireTransfer(row: Record<string, any>): ColumnWireTransferRecord {
