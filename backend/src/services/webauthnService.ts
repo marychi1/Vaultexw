@@ -12,6 +12,8 @@ function fromBase64Url(base64url: string) {
     return Buffer.from(base64url, 'base64');
 }
 
+const WEBAUTHN_CHALLENGE_TTL_SECONDS = 120;
+
 const f2l = new Fido2Lib({
     timeout: 60000,
     rpId: getBackendConfig().webauthnRpId,
@@ -38,9 +40,9 @@ export default class WebAuthnService {
     }
 
     static async verifyRegistration(phone: string, attestationResponse: any) {
-        const storedChallenge = await Database.getWebAuthnChallenge(phone);
+        const storedChallenge = await Database.consumeWebAuthnChallenge(phone, WEBAUTHN_CHALLENGE_TTL_SECONDS);
         if (!storedChallenge) {
-            throw new Error('No registration challenge found for phone');
+            throw new Error('Registration challenge is missing, expired, or already used');
         }
 
         const clientAttestationResponse = {
@@ -59,7 +61,6 @@ export default class WebAuthnService {
         } as any;
 
         const regResult = await f2l.attestationResult(clientAttestationResponse, expected);
-        await Database.removeWebAuthnChallenge(phone);
 
         const authnrData = regResult.authnrData;
         const credentialId = toBase64Url(authnrData.get('credId'));
@@ -86,9 +87,9 @@ export default class WebAuthnService {
     }
 
     static async verifyAssertion(phone: string, assertionResponse: any) {
-        const storedChallenge = await Database.getWebAuthnChallenge(phone);
+        const storedChallenge = await Database.consumeWebAuthnChallenge(phone, WEBAUTHN_CHALLENGE_TTL_SECONDS);
         if (!storedChallenge) {
-            throw new Error('No assertion challenge found for phone');
+            throw new Error('Assertion challenge is missing, expired, or already used');
         }
 
         const clientAssertionResponse = {
@@ -117,7 +118,6 @@ export default class WebAuthnService {
 
         const result = await f2l.assertionResult(clientAssertionResponse, expected);
         await Database.updateCredentialCounter(phone, clientAssertionResponse.id, result.authnrData.get('counter'));
-        await Database.removeWebAuthnChallenge(phone);
         return { authenticated: true };
     }
 }
