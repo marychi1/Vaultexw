@@ -350,6 +350,18 @@ class Database {
         return this.devices.find((d) => d.id === id);
     }
 
+    static async getDeviceByDeviceId(deviceId: string): Promise<Device | undefined> {
+        const pool = await this.postgresReady();
+        if (pool) {
+            const result = await pool.query(
+                'SELECT * FROM devices WHERE device_id = $1 ORDER BY created_at ASC LIMIT 1',
+                [deviceId]
+            );
+            return result.rows[0] ? this.mapDevice(result.rows[0]) : undefined;
+        }
+        return this.devices.find((device) => device.deviceId === deviceId);
+    }
+
     static async getUserDevices(userId: string): Promise<Device[]> {
         const pool = await this.postgresReady();
         if (pool) return (await pool.query('SELECT * FROM devices WHERE user_id = $1 ORDER BY created_at', [userId])).rows.map((row) => this.mapDevice(row));
