@@ -345,8 +345,8 @@ class Database {
         threshold: number,
         lockMinutes: number
     ): Promise<{ failedAttempts: number; lockedUntil: Date | null }> {
-        const safeThreshold = Math.max(1, Math.floor(threshold));
-        const safeLockMinutes = Math.max(1, Math.floor(lockMinutes));
+        const safeThreshold = Number.isFinite(threshold) ? Math.max(1, Math.floor(threshold)) : 5;
+        const safeLockMinutes = Number.isFinite(lockMinutes) ? Math.max(1, Math.floor(lockMinutes)) : 15;
         const pool = await this.postgresReady();
         if (pool) {
             const result = await pool.query(`
