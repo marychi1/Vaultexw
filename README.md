@@ -102,7 +102,7 @@ GET  /api/column/transfers
 GET  /api/column/transfers/:id
 POST /api/column/transfers/wire
 POST /api/column/transfers/wire/sandbox
-POST /api/column/webhook
+POST /api/webhooks/column
 GET  /api/wallet       # HTTP 410; not offered
 POST /api/wallet/*     # HTTP 410; not offered
 ```
