@@ -19,6 +19,9 @@ export interface ColumnWireTransferRecord {
     description: string | null;
     status: string;
     lastErrorCode: string | null;
+    splitReference: string | null;
+    splitLeg: 'reserve' | 'recipient' | null;
+    grossAmountCents: number | null;
     createdAt: Date;
     updatedAt: Date;
     lastReconciledAt: Date | null;
@@ -33,6 +36,16 @@ export interface ColumnWireTransferInput {
     bankAccountId: string;
     counterpartyId: string;
     description?: string;
+    splitReference: string;
+    splitLeg: 'reserve' | 'recipient';
+    grossAmountCents: number;
+}
+
+export interface ColumnWireAuthorization {
+    userId: string;
+    counterpartyId: string;
+    bankAccountId: string;
+    recipientName: string;
 }
 
 export class ColumnWireIdempotencyConflictError extends Error {
@@ -628,9 +641,10 @@ class Database {
             await client.query(`
                 INSERT INTO column_wire_transfers (
                     idempotency_key, reference, user_id, amount_cents, currency_code, recipient_name,
-                    bank_account_id, counterparty_id, description, status
+                    bank_account_id, counterparty_id, description, split_reference, split_leg,
+                    gross_amount_cents, status
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'SUBMISSION_PENDING')
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'SUBMISSION_PENDING')
                 ON CONFLICT (idempotency_key) DO NOTHING
             `, [
                 input.idempotencyKey,
@@ -642,6 +656,9 @@ class Database {
                 input.bankAccountId,
                 input.counterpartyId,
                 input.description || null,
+                input.splitReference,
+                input.splitLeg,
+                input.grossAmountCents,
             ]);
 
             const result = await client.query(
@@ -659,7 +676,10 @@ class Database {
                 row.recipient_name !== input.recipientName ||
                 row.bank_account_id !== input.bankAccountId ||
                 row.counterparty_id !== input.counterpartyId ||
-                (row.description || null) !== (input.description || null)
+                (row.description || null) !== (input.description || null) ||
+                row.split_reference !== input.splitReference ||
+                row.split_leg !== input.splitLeg ||
+                Number(row.gross_amount_cents) !== input.grossAmountCents
             ) {
                 throw new ColumnWireIdempotencyConflictError();
             }
@@ -672,6 +692,42 @@ class Database {
         } finally {
             client.release();
         }
+    }
+
+    static async getColumnWireAuthorization(
+        userId: string,
+        counterpartyId: string
+    ): Promise<ColumnWireAuthorization | undefined> {
+        const pool = await this.postgresReady();
+        if (!pool) {
+            throw new Error('Persistent PostgreSQL is required for Column wire authorization.');
+        }
+
+        const result = await pool.query(`
+            SELECT user_id, counterparty_id, bank_account_id, recipient_name
+            FROM column_wire_authorizations
+            WHERE user_id = $1 AND counterparty_id = $2 AND enabled = TRUE
+        `, [userId, counterpartyId]);
+        const row = result.rows[0];
+        if (!row) return undefined;
+        return {
+            userId: row.user_id,
+            counterpartyId: row.counterparty_id,
+            bankAccountId: row.bank_account_id,
+            recipientName: row.recipient_name,
+        };
+    }
+
+    static async claimColumnWireSubmission(idempotencyKey: string): Promise<boolean> {
+        const pool = await this.postgresReady();
+        if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        const result = await pool.query(`
+            UPDATE column_wire_transfers
+            SET status = 'SUBMISSION_IN_PROGRESS', updated_at = NOW()
+            WHERE idempotency_key = $1 AND status = 'SUBMISSION_PENDING'
+              AND transfer_id IS NULL
+        `, [idempotencyKey]);
+        return result.rowCount === 1;
     }
 
     static async recordColumnWireSubmission(
@@ -794,6 +850,9 @@ class Database {
             description: row.description,
             status: row.status,
             lastErrorCode: row.last_error_code,
+            splitReference: row.split_reference ?? null,
+            splitLeg: row.split_leg ?? null,
+            grossAmountCents: row.gross_amount_cents == null ? null : Number(row.gross_amount_cents),
             createdAt: this.hydrateDate(row.created_at) as Date,
             updatedAt: this.hydrateDate(row.updated_at) as Date,
             lastReconciledAt: this.hydrateDate(row.last_reconciled_at) as Date | null,

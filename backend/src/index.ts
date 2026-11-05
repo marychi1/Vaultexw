@@ -13,6 +13,12 @@ import PostgresService from './services/postgresService';
 import ColumnService from './services/columnService';
 import SupabaseAuthService from './services/supabaseAuthService';
 import { toColumnWireReceipt } from './services/columnWireReceipt';
+import {
+  calculateColumnWireAllocation,
+  getColumnWireLegIdempotencyKey,
+  getColumnWireSplitReference,
+  getColumnWireSplitStatus,
+} from './services/columnWireAllocation';
 import { getBackendConfig, getProductionConfigErrors } from './config';
 
 const app = express();
@@ -454,20 +460,15 @@ app.get('/api/column/transfers/:id', authMiddleware, async (req: AuthRequest, re
 
 app.post('/api/column/transfers/wire', authMiddleware, columnWireLimiter, async (req: AuthRequest, res: Response) => {
   const config = getBackendConfig();
-  const { amount, currencyCode, recipientName, bankAccountId, counterpartyId, description, pin } = req.body;
+  const { amount, currencyCode, counterpartyId, description, pin } = req.body;
   const idempotencyKey = req.header('Idempotency-Key');
   const numericAmount = typeof amount === 'number' || typeof amount === 'string' ? Number(amount) : NaN;
 
   if (!Number.isSafeInteger(numericAmount) || numericAmount <= 0) {
     return res.status(400).json({ error: 'Amount must be a positive integer in cents' });
   }
-  if (currencyCode !== 'USD' ||
-      typeof bankAccountId !== 'string' || bankAccountId.length === 0 ||
-      typeof counterpartyId !== 'string' || counterpartyId.length === 0) {
-    return res.status(400).json({ error: 'USD currency, bank account, and counterparty are required' });
-  }
-  if (typeof recipientName !== 'string' || !recipientName.trim() || recipientName.trim().length > 100) {
-    return res.status(400).json({ error: 'Recipient name is required and must be 100 characters or fewer' });
+  if (currencyCode !== 'USD' || typeof counterpartyId !== 'string' || !counterpartyId.trim()) {
+    return res.status(400).json({ error: 'USD currency and an approved recipient counterparty are required' });
   }
   if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 255) {
     return res.status(400).json({ error: 'An Idempotency-Key header between 16 and 255 characters is required' });
@@ -483,63 +484,142 @@ app.post('/api/column/transfers/wire', authMiddleware, columnWireLimiter, async 
   }
 
   try {
+    const allocation = calculateColumnWireAllocation(numericAmount);
     const user = await Database.getUserById(req.userId!);
     if (!user || !(await AuthService.verifyPIN(pin, user.pinHash))) {
       return res.status(401).json({ error: 'Invalid PIN' });
     }
 
-    const normalizedDescription = typeof description === 'string' ? description.slice(0, 140) : undefined;
-    const tracked = await Database.prepareColumnWireTransfer({
-      userId: req.userId!,
-      idempotencyKey,
-      amountCents: numericAmount,
-      currencyCode,
-      recipientName: recipientName.trim(),
-      bankAccountId,
-      counterpartyId,
-      description: normalizedDescription,
-    });
-    if (tracked.transferId) {
-      const transfer = await ColumnService.getTransfer(tracked.transferId);
-      if (typeof transfer.status === 'string') {
-        await Database.updateColumnWireTransferStatus(tracked.transferId, transfer.status);
-      }
-      return res.status(200).json(toColumnWireReceipt(
-        tracked,
-        typeof transfer.status === 'string' ? transfer.status : tracked.status
-      ));
+    const authorization = await Database.getColumnWireAuthorization(req.userId!, counterpartyId);
+    if (!authorization) {
+      return res.status(403).json({ error: 'Recipient is not authorized for this account' });
+    }
+    if (!authorization.recipientName.trim()) {
+      return res.status(503).json({ error: 'The authorized recipient record is incomplete' });
+    }
+    if (typeof req.body.bankAccountId === 'string' &&
+        req.body.bankAccountId !== authorization.bankAccountId) {
+      return res.status(403).json({ error: 'Source account is not authorized for this recipient' });
+    }
+    const reserveCounterpartyId = config.columnReserveCounterpartyId;
+    if (!reserveCounterpartyId || reserveCounterpartyId === authorization.counterpartyId) {
+      return res.status(503).json({ error: 'The Wells Fargo reserve counterparty is not configured correctly' });
     }
 
-    let transfer: Record<string, unknown>;
-    try {
-      transfer = await ColumnService.createWire({
-        amount: numericAmount,
+    const normalizedDescription = typeof description === 'string' ? description.slice(0, 140) : undefined;
+    const splitReference = getColumnWireSplitReference(req.userId!, idempotencyKey);
+    const recipientDescription = normalizedDescription
+      ? `${normalizedDescription} - recipient payout`.slice(0, 140)
+      : 'Recipient payout';
+    const reserveDescription = normalizedDescription
+      ? `${normalizedDescription} - Wells Fargo reserve`.slice(0, 140)
+      : 'Wells Fargo reserve';
+    const legInputs = [
+      {
+        leg: 'reserve' as const,
+        amountCents: allocation.reserveAmountCents,
+        counterpartyId: reserveCounterpartyId,
+        recipientName: 'Wells Fargo reserve',
+        description: reserveDescription,
+      },
+      {
+        leg: 'recipient' as const,
+        amountCents: allocation.recipientAmountCents,
+        counterpartyId: authorization.counterpartyId,
+        recipientName: authorization.recipientName,
+        description: recipientDescription,
+      },
+    ];
+
+    const trackedLegs = await Promise.all(legInputs.map((leg) =>
+      Database.prepareColumnWireTransfer({
+        userId: req.userId!,
+        idempotencyKey: getColumnWireLegIdempotencyKey(req.userId!, idempotencyKey, leg.leg),
+        amountCents: leg.amountCents,
         currencyCode,
-        bankAccountId,
-        counterpartyId,
-        description: normalizedDescription,
-        idempotencyKey,
-      });
-    } catch (error) {
-      await Database.markColumnWireSubmissionUnknown(idempotencyKey, 'UPSTREAM_REQUEST_FAILED');
-      throw error;
-    }
-    if (typeof transfer.id !== 'string' || typeof transfer.status !== 'string') {
-      await Database.markColumnWireSubmissionUnknown(idempotencyKey, 'INVALID_UPSTREAM_RESPONSE');
-      return res.status(502).json({ error: 'Column returned an incomplete wire response; reconcile before retrying' });
-    }
-    await Database.recordColumnWireSubmission(idempotencyKey, {
-      id: transfer.id,
-      status: transfer.status,
+        recipientName: leg.recipientName,
+        bankAccountId: authorization.bankAccountId,
+        counterpartyId: leg.counterpartyId,
+        description: leg.description,
+        splitReference,
+        splitLeg: leg.leg,
+        grossAmountCents: allocation.grossAmountCents,
+      })
+    ));
+
+    const results = await Promise.all(trackedLegs.map(async (tracked, index) => {
+      const leg = legInputs[index];
+      if (tracked.transferId) {
+        try {
+          const transfer = await ColumnService.getTransfer(tracked.transferId);
+          if (typeof transfer.status === 'string') {
+            await Database.updateColumnWireTransferStatus(tracked.transferId, transfer.status);
+          }
+          return {
+            leg: leg.leg,
+            receipt: toColumnWireReceipt(
+              tracked,
+              typeof transfer.status === 'string' ? transfer.status : tracked.status
+            ),
+          };
+        } catch (error) {
+          console.error(`[Column] Split ${splitReference} ${leg.leg} status lookup failed:`, error);
+          return { leg: leg.leg, receipt: toColumnWireReceipt(tracked, 'SUBMISSION_UNKNOWN') };
+        }
+      }
+
+      if (!await Database.claimColumnWireSubmission(tracked.idempotencyKey)) {
+        return { leg: leg.leg, receipt: toColumnWireReceipt(tracked, 'SUBMISSION_UNKNOWN') };
+      }
+
+      try {
+        const transfer = await ColumnService.createWire({
+          amount: leg.amountCents,
+          currencyCode,
+          bankAccountId: authorization.bankAccountId,
+          counterpartyId: leg.counterpartyId,
+          description: leg.description,
+          idempotencyKey: tracked.idempotencyKey,
+        });
+        if (typeof transfer.id !== 'string' || typeof transfer.status !== 'string') {
+          await Database.markColumnWireSubmissionUnknown(tracked.idempotencyKey, 'INVALID_UPSTREAM_RESPONSE');
+          return { leg: leg.leg, receipt: toColumnWireReceipt(tracked, 'SUBMISSION_UNKNOWN') };
+        }
+        await Database.recordColumnWireSubmission(tracked.idempotencyKey, {
+          id: transfer.id,
+          status: transfer.status,
+        });
+        return { leg: leg.leg, receipt: toColumnWireReceipt(tracked, transfer.status) };
+      } catch (error) {
+        console.error(`[Column] Split ${splitReference} ${leg.leg} submission is uncertain:`, error);
+        await Database.markColumnWireSubmissionUnknown(tracked.idempotencyKey, 'UPSTREAM_REQUEST_FAILED');
+        return { leg: leg.leg, receipt: toColumnWireReceipt(tracked, 'SUBMISSION_UNKNOWN') };
+      }
+    }));
+
+    const splitStatus = getColumnWireSplitStatus(results.map((result) => result.receipt.providerStatus));
+    const allPreviouslySubmitted = trackedLegs.every((leg) => Boolean(leg.transferId));
+    return res.status(splitStatus === 'COMPLETED' ? (allPreviouslySubmitted ? 200 : 201) : 202).json({
+      status: splitStatus,
+      splitReference,
+      grossAmount: allocation.grossAmountCents / 100,
+      reserveAmount: allocation.reserveAmountCents / 100,
+      recipientAmount: allocation.recipientAmountCents / 100,
+      currencyCode,
+      fees: 'Column fees are separate from this split.',
+      legs: results,
     });
-    return res.status(201).json(toColumnWireReceipt(tracked, transfer.status));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Column wire creation failed';
+    if (message.includes('too small to split') || message.includes('Gross amount')) {
+      return res.status(400).json({ error: message });
+    }
     if (error instanceof ColumnWireIdempotencyConflictError) {
       return res.status(409).json({ error: error.message });
     }
     const status = message === 'Column integration is disabled' ||
-      message === 'Persistent PostgreSQL is required for Column wire tracking.' ? 503 : 502;
+      message === 'Persistent PostgreSQL is required for Column wire tracking.' ||
+      message === 'Persistent PostgreSQL is required for Column wire authorization.' ? 503 : 502;
     return res.status(status).json({ error: status === 503 ? message : 'Column wire submission failed; check tracked status before retrying' });
   }
 });

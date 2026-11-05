@@ -21,14 +21,42 @@ The API listens on port 3000 by default. Local authentication and the file-backe
 ## Wire status and safety
 
 - Column integration is disabled unless `COLUMN_ENABLED=true` and valid provider credentials are configured.
-- Live wire submission is hard-disabled in code until server-side account and counterparty ownership controls are implemented and tested. The `COLUMN_LIVE_WIRES_ENABLED` flag cannot enable it.
+- Live wire submission remains hard-disabled in code pending operational verification and explicit approval. The `COLUMN_LIVE_WIRES_ENABLED` flag cannot enable it.
 - Keep both Column flags disabled in staging. Do not use production credentials or enable live wires for testing.
+- The future wire request treats `amount` as gross USD cents and allocates 20% to the server-configured Wells Fargo reserve counterparty and the remaining 80% to the authorized recipient. The reserve is rounded down to a whole cent; any remainder stays with the recipient. Column fees are separate.
+- Both legs use distinct idempotency keys and are submitted concurrently. They are separate transfers, not an atomic transaction; `PARTIAL` or `SUBMISSION_UNKNOWN` requires reconciliation, while `PROCESSING` means Column accepted the legs but they are not both complete. Never automatically retry an uncertain leg, and a provider status does not mean funds arrived immediately at a bank.
+- Recipient counterparty and source bank-account authorizations are stored server-side in `column_wire_authorizations`; the request cannot choose an arbitrary source account. Provision mappings through the controlled database-operator process only after verifying ownership. The Wells Fargo Column counterparty ID belongs in the server-only `COLUMN_RESERVE_COUNTERPARTY_ID` setting, never in the browser.
 - The wire endpoint currently accepts USD only. Confirm corridors, currencies, beneficiary fields, fees, FX, and sandbox availability with Column before claiming international support.
 - A provider-completed status is not proof that the recipient bank credited funds.
 - The health endpoint reports database readiness only; blockchain health is not part of this product.
 - Do not retry an uncertain payment. Reconcile its status with Column and the receiving bank first.
 
-The startup schema includes the nullable-wallet change. The same change is documented in `backend/sql/002_bank_wire_only_auth.sql`. Back up production data before deployment. Existing wallet data is intentionally retained until it can be safely reconciled; do not clear it as part of this product conversion.
+### Authorized hold review and escalation
+
+When a wire reports `HOLD`, `PRE_REVIEW`, or `MANUAL_REVIEW`:
+
+1. Stop further attempts for that payment. Do not submit a replacement, call a clear/release endpoint, alter the transfer payload, or use another identity to evade the review.
+2. In Column's authorized dashboard, find each transfer by its provider transfer ID. For split payments, inspect both legs under the same split reference; one leg can advance while the other is held.
+3. Record the status, provider transfer ID, split reference and leg, amount/currency, submission time, and any provider-supplied reason or reference. Keep account and identity data in approved secure systems; never put credentials, full bank details, or sensitive customer documents in logs, tickets, or chat.
+4. Ask the authorized Column reviewer or support contact for the specific reason, required evidence, expected review timing, and any permitted next step. Provide only the documentation requested through Column's approved secure channel. Keep a record of the reviewer, case/reference number, response, and decision.
+5. Escalate through Column's official support/compliance channel if the reason or timing is unclear or the review exceeds the provider's stated window. Do not promise immediate approval or bank receipt.
+6. Reconcile both legs with Column and, where needed, the receiving bank before treating the payment as complete or taking corrective action. A held, rejected, or uncertain leg may coexist with a completed other leg; never automatically retry or roll back either leg.
+
+Only a Column-authorized reviewer may make review decisions in the provider's approved workflow. The application does not clear holds, influence reviewer decisions, or pay for approval. Any legitimate fee or commission must be contractually authorized, transparently disclosed, and accounted for separately from the transfer and reserve allocation.
+
+The startup schema includes the nullable-wallet change and the split-wire authorization/tracking fields. The changes are documented in `backend/sql/002_bank_wire_only_auth.sql` and `backend/sql/003_column_wire_authorizations.sql`. Back up production data before deployment. Existing wallet data is intentionally retained until it can be safely reconciled; do not clear it as part of this product conversion.
+
+An authorization row must be provisioned by a trusted database operator and kept disabled until the customer, source account, recipient, and Column counterparty have been verified:
+
+```sql
+INSERT INTO column_wire_authorizations
+  (user_id, counterparty_id, bank_account_id, recipient_name, enabled)
+VALUES
+  ('<internal-user-id>', '<approved-recipient-counterparty-id>',
+   '<approved-source-bank-account-id>', '<verified-recipient-name>', FALSE);
+```
+
+The client submits only the authorized recipient counterparty ID. The backend obtains the source account from this table; an optional client-supplied source account must match it. Do not expose a self-service path to enable or edit these records.
 
 ## Staging
 
@@ -72,7 +100,7 @@ POST /api/auth/login
 GET  /api/column/transfers
 GET  /api/column/transfers/:id
 POST /api/column/transfers
-POST /api/column/webhook
+POST /api/webhooks/column
 GET  /api/wallet       # HTTP 410; not offered
 POST /api/wallet/*     # HTTP 410; not offered
 ```
