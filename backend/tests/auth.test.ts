@@ -231,6 +231,16 @@ describe('Auth and OTP flows', () => {
         });
         expect(second.status).toBe(201);
 
+        const firstUser = await Database.getUserByPhone('555-1011');
+        const secondUser = await Database.getUserByPhone('555-1012');
+        expect(firstUser).toBeDefined();
+        expect(secondUser).toBeDefined();
+        const firstDevice = await Database.getDeviceById('shared-device');
+        expect(firstDevice).toMatchObject({ userId: firstUser!.id, id: 'shared-device' });
+        expect(await Database.getUserDevices(secondUser!.id)).not.toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: 'shared-device' })])
+        );
+
         const reuse = await request(app)
             .post('/api/auth/login')
             .send({ phone: '555-1012', pin: '5678', deviceId: 'shared-device', deviceName: 'second' });
@@ -250,7 +260,13 @@ describe('Auth and OTP flows', () => {
         expect(second.status).toBe(201);
 
         const secondUser = await Database.getUserByPhone('555-1014');
-        if (!secondUser) throw new Error('Second test user was not created');
+        const firstUser = await Database.getUserByPhone('555-1013');
+        if (!secondUser || !firstUser) throw new Error('Test users were not created');
+        const ownedDevice = await Database.getDeviceById('owned-device');
+        expect(ownedDevice).toMatchObject({ userId: firstUser.id, id: 'owned-device' });
+        expect(await Database.getUserDevices(secondUser.id)).not.toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: 'owned-device' })])
+        );
         const mismatchedToken = AuthService.generateAuthToken(secondUser.id, 'owned-device');
 
         const response = await request(app)
