@@ -61,7 +61,7 @@ export function getColumnWireSplitStatus(statuses: string[]): ColumnWireSplitSta
 
     const unknown = ['SUBMISSION_PENDING', 'SUBMISSION_IN_PROGRESS', 'SUBMISSION_UNKNOWN'];
     if (normalized.some((status) => unknown.includes(status))) return 'SUBMISSION_UNKNOWN';
-    const processing = ['INITIATED', 'HOLD', 'PRE_REVIEW', 'MANUAL_REVIEW'];
+    const processing = ['INITIATED', 'SUBMITTED', 'HOLD', 'PRE_REVIEW', 'MANUAL_REVIEW'];
     return normalized.every((status) => processing.includes(status) || status === 'COMPLETED')
         ? 'PROCESSING'
         : 'SUBMISSION_UNKNOWN';
