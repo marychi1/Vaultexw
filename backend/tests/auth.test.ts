@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import app from '../src/index';
 import Database from '../src/services/database';
 import AuthService from '../src/services/authService';
+import PostgresService from '../src/services/postgresService';
 
 async function signupWithOtp(payload: { phone: string; [key: string]: unknown }) {
     await request(app).post('/api/auth/request-otp').send({ phone: payload.phone }).expect(200);
