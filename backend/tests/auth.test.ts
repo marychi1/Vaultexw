@@ -204,6 +204,59 @@ describe('Auth and OTP flows', () => {
         delete process.env.COLUMN_ENABLED;
     });
 
+    test('concurrent PIN failures increment atomically and establish lockout', async () => {
+        const phone = '555-1031';
+        const signup = await signupWithOtp({
+            phone, pin: '2468', deviceId: 'pin-race-device', deviceName: 'test'
+        });
+        expect(signup.status).toBe(201);
+        const user = await Database.getUserByPhone(phone);
+        if (!user) throw new Error('Test user was not created');
+
+        const outcomes = await Promise.all(
+            Array.from({ length: 5 }, () => Database.recordPinFailure(user.id, 5, 15))
+        );
+        const refreshed = await Database.getUserByPhone(phone);
+        expect(outcomes).toHaveLength(5);
+        expect(refreshed?.pinFailedAttempts).toBe(5);
+        expect(refreshed?.pinLockedUntil?.getTime()).toBeGreaterThan(Date.now());
+        await expect(AuthService.verifyPINWithLockout(phone, '2468')).rejects.toThrow(/locked/i);
+    });
+
+    test('PIN success cannot clear an active lockout', async () => {
+        const phone = '555-1032';
+        const signup = await signupWithOtp({
+            phone, pin: '1357', deviceId: 'pin-lock-device', deviceName: 'test'
+        });
+        expect(signup.status).toBe(201);
+        const user = await Database.getUserByPhone(phone);
+        if (!user) throw new Error('Test user was not created');
+
+        await Database.updateUser(user.id, {
+            pinFailedAttempts: 5,
+            pinLockedUntil: new Date(Date.now() + 60_000),
+        });
+        await expect(AuthService.verifyPINWithLockout(phone, '1357')).rejects.toThrow(/locked/i);
+        const lockedUser = await Database.getUserByPhone(phone);
+        expect(lockedUser?.pinFailedAttempts).toBe(5);
+        expect(lockedUser?.pinLockedUntil?.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    test('WebAuthn challenges are one-time and expired challenges are rejected', async () => {
+        const phone = '555-1033';
+        await Database.createWebAuthnChallenge(phone, 'single-use-challenge');
+        const first = await Database.consumeWebAuthnChallenge(phone, 120);
+        const replay = await Database.consumeWebAuthnChallenge(phone, 120);
+        expect(first?.challenge).toBe('single-use-challenge');
+        expect(replay).toBeUndefined();
+
+        await Database.createWebAuthnChallenge(phone, 'expired-challenge');
+        const expired = await Database.consumeWebAuthnChallenge(phone, 0);
+        expect(expired).toBeUndefined();
+        const expiredReplay = await Database.consumeWebAuthnChallenge(phone, 120);
+        expect(expiredReplay).toBeUndefined();
+    });
+
     test('PIN lockout after repeated failures', async () => {
         const phone = '555-0003';
         await signupWithOtp({ phone, pin: '9999', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev2', deviceName: 'test' });
