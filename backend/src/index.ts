@@ -80,6 +80,34 @@ app.post('/api/webhooks/column', express.raw({ type: 'application/json' }), asyn
 });
 app.use(express.json());
 
+app.get('/api/health', async (_req: Request, res: Response) => {
+  const config = getBackendConfig();
+  res.setHeader('Cache-Control', 'no-store');
+
+  try {
+    if (config.nodeEnv === 'production' && !config.postgresEnabled) {
+      return res.status(503).json({ status: 'not_ready', database: 'unavailable' });
+    }
+
+    if (config.postgresEnabled) {
+      const schemaReady = await PostgresService.ensureSchema();
+      const pool = PostgresService.getPool();
+      if (!schemaReady || !pool) {
+        return res.status(503).json({ status: 'not_ready', database: 'unavailable' });
+      }
+      await pool.query('SELECT 1');
+      return res.status(200).json({ status: 'ok', database: 'postgres' });
+    }
+
+    if (config.nodeEnv === 'production') {
+      return res.status(503).json({ status: 'not_ready', database: 'unavailable' });
+    }
+    return res.status(200).json({ status: 'ok', database: 'file' });
+  } catch {
+    return res.status(503).json({ status: 'not_ready', database: 'unavailable' });
+  }
+});
+
 app.get('/api/environment', (_req: Request, res: Response) => {
   const config = getBackendConfig();
   const environment = config.nodeEnv === 'production'

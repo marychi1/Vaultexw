@@ -23,6 +23,18 @@ describe('Auth and OTP flows', () => {
         await Database.resetAll();
     });
 
+    test('health endpoint reports database readiness without exposing connection details', async () => {
+        const response = await request(app).get('/api/health');
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({
+            status: 'ok',
+            database: Database.getPersistenceMode(),
+        });
+        expect(response.headers['cache-control']).toBe('no-store');
+        expect(JSON.stringify(response.body)).not.toMatch(/postgresql:\/\/|password|secret/i);
+    });
+
     test('environment status reports the environment and disabled wire state without caching', async () => {
         const response = await request(app).get('/api/environment');
 
