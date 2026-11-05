@@ -45,6 +45,11 @@ describe('Column wire allocation', () => {
         expect(getColumnWireSplitReference('user-2', 'request-key-123456')).not.toBe(splitReference);
     });
 
+    test('treats Column submitted legs as processing, not unknown or completed', () => {
+        expect(getColumnWireSplitStatus(['SUBMITTED', 'SUBMITTED'])).toBe('PROCESSING');
+        expect(getColumnWireSplitStatus(['SUBMITTED', 'INITIATED'])).toBe('PROCESSING');
+    });
+
     test('reports complete, partial, processing, unresolved, and failed split outcomes', () => {
         expect(getColumnWireSplitStatus(['COMPLETED', 'COMPLETED'])).toBe('COMPLETED');
         expect(getColumnWireSplitStatus(['COMPLETED', 'REJECTED'])).toBe('PARTIAL');

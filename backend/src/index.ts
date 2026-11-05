@@ -80,6 +80,34 @@ app.post('/api/webhooks/column', express.raw({ type: 'application/json' }), asyn
 });
 app.use(express.json());
 
+app.get('/api/health', async (_req: Request, res: Response) => {
+  const config = getBackendConfig();
+  res.setHeader('Cache-Control', 'no-store');
+
+  try {
+    if (config.nodeEnv === 'production' && !config.postgresEnabled) {
+      return res.status(503).json({ status: 'not_ready', database: 'unavailable' });
+    }
+
+    if (config.postgresEnabled) {
+      const schemaReady = await PostgresService.ensureSchema();
+      const pool = PostgresService.getPool();
+      if (!schemaReady || !pool) {
+        return res.status(503).json({ status: 'not_ready', database: 'unavailable' });
+      }
+      await pool.query('SELECT 1');
+      return res.status(200).json({ status: 'ok', database: 'postgres' });
+    }
+
+    if (config.nodeEnv === 'production') {
+      return res.status(503).json({ status: 'not_ready', database: 'unavailable' });
+    }
+    return res.status(200).json({ status: 'ok', database: 'file' });
+  } catch {
+    return res.status(503).json({ status: 'not_ready', database: 'unavailable' });
+  }
+});
+
 app.get('/api/environment', (_req: Request, res: Response) => {
   const config = getBackendConfig();
   const environment = config.nodeEnv === 'production'
@@ -285,28 +313,29 @@ app.get('/api/auth/customer-link', async (req: Request, res: Response) => {
 // ===== PIN Verification (for quick checks) =====
 app.post('/api/auth/verify-pin', async (req: Request, res: Response) => {
   const { phone, pin } = req.body;
-  if (!phone || !pin) {
-    return res.status(400).json({ error: 'Phone and PIN required' });
+  if (typeof phone !== 'string' || typeof pin !== 'string' || !phone.trim() || !/^\d{4,8}$/.test(pin)) {
+    return res.status(400).json({ error: 'Phone and valid PIN required' });
   }
 
   try {
-    const user = await Database.getUserByPhone(phone);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const ok = await AuthService.verifyPIN(pin, user.pinHash);
+    const ok = await AuthService.verifyPINWithLockout(phone.trim(), pin);
     if (!ok) return res.status(401).json({ error: 'Invalid PIN' });
-
     return res.json({ verified: true });
   } catch (err) {
+    const message = err instanceof Error ? err.message : 'PIN verification failed';
+    if (message === 'User not found') return res.status(404).json({ error: 'User not found' });
+    if (message === 'PIN locked. Try later') return res.status(423).json({ error: message });
     return res.status(500).json({ error: 'PIN verification failed' });
   }
 });
 
 // WebAuthn registration and authentication endpoints (using fido2-lib)
-app.post('/api/auth/webauthn/register-options', async (req: Request, res: Response) => {
-  const { phone } = req.body;
-  if (!phone) return res.status(400).json({ error: 'Phone required' });
+app.post('/api/auth/webauthn/register-options', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+  if (!phone || !req.userId) return res.status(400).json({ error: 'Authenticated account required' });
   try {
+    const user = await Database.getUserById(req.userId);
+    if (!user || user.phone !== phone) return res.status(403).json({ error: 'Phone does not belong to the authenticated account' });
     const opts = await WebAuthnService.generateRegistrationOptions(phone);
     return res.json(opts);
   } catch (err) {
@@ -314,10 +343,13 @@ app.post('/api/auth/webauthn/register-options', async (req: Request, res: Respon
   }
 });
 
-app.post('/api/auth/webauthn/register', async (req: Request, res: Response) => {
-  const { phone, attestation } = req.body;
-  if (!phone || !attestation) return res.status(400).json({ error: 'phone and attestation required' });
+app.post('/api/auth/webauthn/register', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+  const { attestation } = req.body;
+  if (!phone || !attestation || !req.userId) return res.status(400).json({ error: 'Authenticated account and attestation required' });
   try {
+    const user = await Database.getUserById(req.userId);
+    if (!user || user.phone !== phone) return res.status(403).json({ error: 'Phone does not belong to the authenticated account' });
     const result = await WebAuthnService.verifyRegistration(phone, attestation);
     return res.json(result);
   } catch (err) {
@@ -660,7 +692,7 @@ app.get('/api/notifications', authMiddleware, async (req: AuthRequest, res: Resp
 app.patch('/api/notifications/:id/read', authMiddleware, async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
 
-  const notification = await Database.markNotificationAsRead(id);
+  const notification = await Database.markNotificationAsRead(id, req.userId!);
   if (!notification) {
     return res.status(404).json({ error: 'Notification not found' });
   }

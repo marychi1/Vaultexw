@@ -1,5 +1,6 @@
 const WIRE_EVENT_STATUSES: Record<string, string> = {
     'wire.outgoing_transfer.initiated': 'INITIATED',
+    'wire.outgoing_transfer.submitted': 'SUBMITTED',
     'wire.outgoing_transfer.hold_created': 'HOLD',
     'wire.outgoing_transfer.pre_review': 'PRE_REVIEW',
     'wire.outgoing_transfer.manual_review': 'MANUAL_REVIEW',

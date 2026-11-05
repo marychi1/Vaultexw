@@ -340,6 +340,78 @@ class Database {
         return user;
     }
 
+    static async recordPinFailure(
+        userId: string,
+        threshold: number,
+        lockMinutes: number
+    ): Promise<{ failedAttempts: number; lockedUntil: Date | null }> {
+        const safeThreshold = Number.isFinite(threshold) ? Math.max(1, Math.floor(threshold)) : 5;
+        const safeLockMinutes = Number.isFinite(lockMinutes) ? Math.max(1, Math.floor(lockMinutes)) : 15;
+        const pool = await this.postgresReady();
+        if (pool) {
+            const result = await pool.query(`
+                UPDATE users
+                SET pin_failed_attempts = CASE
+                        WHEN pin_locked_until IS NOT NULL AND pin_locked_until > NOW()
+                            THEN pin_failed_attempts
+                        ELSE pin_failed_attempts + 1
+                    END,
+                    pin_locked_until = CASE
+                        WHEN pin_locked_until IS NOT NULL AND pin_locked_until > NOW()
+                            THEN pin_locked_until
+                        WHEN pin_failed_attempts + 1 >= $2
+                            THEN NOW() + ($3 * INTERVAL '1 minute')
+                        ELSE NULL
+                    END
+                WHERE id = $1
+                RETURNING pin_failed_attempts, pin_locked_until
+            `, [userId, safeThreshold, safeLockMinutes]);
+            const row = result.rows[0];
+            if (!row) throw new Error('User not found');
+            return {
+                failedAttempts: Number(row.pin_failed_attempts),
+                lockedUntil: this.hydrateDate(row.pin_locked_until) as Date | null,
+            };
+        }
+
+        const user = this.users.find((entry) => entry.id === userId);
+        if (!user) throw new Error('User not found');
+        const now = new Date();
+        if (!user.pinLockedUntil || user.pinLockedUntil <= now) {
+            user.pinFailedAttempts = (user.pinFailedAttempts || 0) + 1;
+            user.pinLockedUntil = user.pinFailedAttempts >= safeThreshold
+                ? new Date(now.getTime() + safeLockMinutes * 60 * 1000)
+                : null;
+            this.persist();
+        }
+        return {
+            failedAttempts: user.pinFailedAttempts || 0,
+            lockedUntil: user.pinLockedUntil || null,
+        };
+    }
+
+    static async resetPinFailuresIfUnlocked(userId: string): Promise<boolean> {
+        const pool = await this.postgresReady();
+        if (pool) {
+            const result = await pool.query(`
+                UPDATE users
+                SET pin_failed_attempts = 0, pin_locked_until = NULL
+                WHERE id = $1
+                  AND (pin_locked_until IS NULL OR pin_locked_until <= NOW())
+                RETURNING id
+            `, [userId]);
+            return result.rowCount === 1;
+        }
+
+        const user = this.users.find((entry) => entry.id === userId);
+        if (!user) return false;
+        if (user.pinLockedUntil && user.pinLockedUntil > new Date()) return false;
+        user.pinFailedAttempts = 0;
+        user.pinLockedUntil = null;
+        this.persist();
+        return true;
+    }
+
     // Device operations
     static async getDeviceById(id: string): Promise<Device | undefined> {
         const pool = await this.postgresReady();
@@ -350,6 +422,18 @@ class Database {
         return this.devices.find((d) => d.id === id);
     }
 
+    static async getDeviceByDeviceId(deviceId: string): Promise<Device | undefined> {
+        const pool = await this.postgresReady();
+        if (pool) {
+            const result = await pool.query(
+                'SELECT * FROM devices WHERE device_id = $1 ORDER BY created_at ASC LIMIT 1',
+                [deviceId]
+            );
+            return result.rows[0] ? this.mapDevice(result.rows[0]) : undefined;
+        }
+        return this.devices.find((device) => device.deviceId === deviceId);
+    }
+
     static async getUserDevices(userId: string): Promise<Device[]> {
         const pool = await this.postgresReady();
         if (pool) return (await pool.query('SELECT * FROM devices WHERE user_id = $1 ORDER BY created_at', [userId])).rows.map((row) => this.mapDevice(row));
@@ -357,10 +441,45 @@ class Database {
     }
 
     static async createDevice(device: Device): Promise<Device> {
+        const existing = await this.getDeviceByDeviceId(device.deviceId);
+        if (existing) {
+            if (existing.userId !== device.userId) {
+                throw new Error('Device is already associated with another account');
+            }
+            return existing;
+        }
+
         const pool = await this.postgresReady();
         if (pool) {
-            await pool.query(`INSERT INTO devices (id,user_id,device_id,device_name,ip_address,user_agent,authorized,last_activity,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [device.id, device.userId, device.deviceId, device.deviceName, device.ipAddress, device.userAgent, device.authorized, device.lastActivity, device.createdAt]);
-            return device;
+            try {
+                await pool.query(
+                    `INSERT INTO devices (id,user_id,device_id,device_name,ip_address,user_agent,authorized,last_activity,created_at)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                    [device.id, device.userId, device.deviceId, device.deviceName, device.ipAddress, device.userAgent, device.authorized, device.lastActivity, device.createdAt]
+                );
+                return device;
+            } catch (error) {
+                const isUniqueViolation = typeof error === 'object' && error !== null &&
+                    'code' in error && error.code === '23505';
+                if (!isUniqueViolation) throw error;
+
+                // Another request may have claimed this device_id after our initial lookup.
+                const winner = await this.getDeviceByDeviceId(device.deviceId);
+                if (!winner) throw error;
+                if (winner.userId !== device.userId) {
+                    throw new Error('Device is already associated with another account');
+                }
+                return winner;
+            }
+        }
+
+        // Keep the in-memory fallback race-safe too: no await between this check and push.
+        const concurrentWinner = this.devices.find((entry) => entry.deviceId === device.deviceId);
+        if (concurrentWinner) {
+            if (concurrentWinner.userId !== device.userId) {
+                throw new Error('Device is already associated with another account');
+            }
+            return concurrentWinner;
         }
         this.devices.push(device);
         this.persist();
@@ -494,14 +613,16 @@ class Database {
         return notification;
     }
 
-    static async markNotificationAsRead(id: string): Promise<LoginNotification | undefined> {
+    static async markNotificationAsRead(id: string, userId: string): Promise<LoginNotification | undefined> {
         const pool = await this.postgresReady();
         if (pool) {
-            await pool.query('UPDATE notifications SET read = TRUE WHERE id = $1', [id]);
-            const result = await pool.query('SELECT * FROM notifications WHERE id = $1', [id]);
+            const result = await pool.query(
+                'UPDATE notifications SET read = TRUE WHERE id = $1 AND user_id = $2 RETURNING *',
+                [id, userId]
+            );
             return result.rows[0] ? this.mapNotification(result.rows[0]) : undefined;
         }
-        const notification = this.notifications.find((entry) => entry.id === id);
+        const notification = this.notifications.find((entry) => entry.id === id && entry.userId === userId);
         if (notification) {
             notification.read = true;
             this.persist();
@@ -524,23 +645,36 @@ class Database {
         return entry;
     }
 
-    static async getWebAuthnChallenge(phone: string) {
+    static async consumeWebAuthnChallenge(phone: string, ttlSeconds = 120) {
+        const safeTtlSeconds = Math.max(0, Math.floor(ttlSeconds));
         const pool = await this.postgresReady();
         if (pool) {
-            const result = await pool.query('SELECT * FROM webauthn_challenges WHERE phone = $1', [phone]);
-            return result.rows[0] ? { phone: result.rows[0].phone, challenge: result.rows[0].challenge, createdAt: result.rows[0].created_at } : undefined;
+            // DELETE ... RETURNING makes challenge consumption atomic: only one concurrent
+            // request can obtain the challenge. Freshness is evaluated by the database clock.
+            const result = await pool.query(`
+                DELETE FROM webauthn_challenges
+                WHERE phone = $1
+                RETURNING phone, challenge, created_at,
+                    (created_at > NOW() - ($2 * INTERVAL '1 second')) AS is_fresh
+            `, [phone, safeTtlSeconds]);
+            const row = result.rows[0];
+            if (!row || row.is_fresh !== true) return undefined;
+            return {
+                phone: row.phone,
+                challenge: row.challenge,
+                createdAt: this.hydrateDate(row.created_at) as Date,
+            };
         }
-        return this.webauthnChallenges.find((c) => c.phone === phone);
-    }
 
-    static async removeWebAuthnChallenge(phone: string) {
-        const pool = await this.postgresReady();
-        if (pool) {
-            await pool.query('DELETE FROM webauthn_challenges WHERE phone = $1', [phone]);
-            return;
-        }
-        this.webauthnChallenges = this.webauthnChallenges.filter((c) => c.phone !== phone);
+        // In-memory fallback also removes the entry synchronously before returning it,
+        // so concurrent consumers cannot both validate the same challenge.
+        const index = this.webauthnChallenges.findIndex((entry) => entry.phone === phone);
+        if (index < 0) return undefined;
+        const [entry] = this.webauthnChallenges.splice(index, 1);
         this.persist();
+        const ageMs = Date.now() - entry.createdAt.getTime();
+        if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs >= safeTtlSeconds * 1000) return undefined;
+        return entry;
     }
 
     // Credentials
@@ -609,7 +743,34 @@ class Database {
                         WHERE transfer_id = $2
                           AND (
                             status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
-                            OR $1 = 'RETURNED'
+                            OR ($1 = 'RETURNED' AND status <> 'RETURNED')
+                          )
+                          AND (
+                            status IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                            OR
+                            CASE status
+                              WHEN 'SUBMISSION_PENDING' THEN 0
+                              WHEN 'SUBMISSION_IN_PROGRESS' THEN 1
+                              WHEN 'INITIATED' THEN 2
+                              WHEN 'HOLD' THEN 3
+                              WHEN 'PRE_REVIEW' THEN 3
+                              WHEN 'MANUAL_REVIEW' THEN 3
+                              WHEN 'SUBMITTED' THEN 4
+                              ELSE -1
+                            END
+                            <=
+                            CASE $1
+                              WHEN 'INITIATED' THEN 2
+                              WHEN 'HOLD' THEN 3
+                              WHEN 'PRE_REVIEW' THEN 3
+                              WHEN 'MANUAL_REVIEW' THEN 3
+                              WHEN 'SUBMITTED' THEN 4
+                              WHEN 'COMPLETED' THEN 5
+                              WHEN 'REJECTED' THEN 5
+                              WHEN 'CANCELED' THEN 5
+                              WHEN 'RETURNED' THEN 6
+                              ELSE -1
+                            END
                           )
                     `, [status, event.transferId]);
                 }
@@ -756,23 +917,51 @@ class Database {
                 throw new Error('Column wire response could not be linked to its persisted request.');
             }
 
+            // A webhook can arrive before Column's create-transfer response is persisted.
+            // Replay every event for this exact provider transfer in receipt order; the
+            // transition guard prevents delayed earlier events from regressing its status.
             const events = await client.query(`
                 SELECT event_type FROM column_webhook_events
                 WHERE transfer_id = $1
-                ORDER BY received_at DESC
-                LIMIT 1
+                ORDER BY received_at ASC, id ASC
             `, [transfer.id]);
-            const webhookStatus = events.rows[0]
-                ? getColumnWireEventStatus(events.rows[0].event_type)
-                : undefined;
-            if (webhookStatus) {
+            for (const event of events.rows) {
+                const webhookStatus = getColumnWireEventStatus(event.event_type);
+                if (!webhookStatus) continue;
                 await client.query(`
                     UPDATE column_wire_transfers
                     SET status = $1, updated_at = NOW()
                     WHERE idempotency_key = $2
                       AND (
                         status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
-                        OR $1 = 'RETURNED'
+                        OR ($1 = 'RETURNED' AND status <> 'RETURNED')
+                      )
+                      AND (
+                        status IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                        OR
+                        CASE status
+                          WHEN 'SUBMISSION_PENDING' THEN 0
+                          WHEN 'SUBMISSION_IN_PROGRESS' THEN 1
+                          WHEN 'INITIATED' THEN 2
+                          WHEN 'HOLD' THEN 3
+                          WHEN 'PRE_REVIEW' THEN 3
+                          WHEN 'MANUAL_REVIEW' THEN 3
+                          WHEN 'SUBMITTED' THEN 4
+                          ELSE -1
+                        END
+                        <=
+                        CASE $1
+                          WHEN 'INITIATED' THEN 2
+                          WHEN 'HOLD' THEN 3
+                          WHEN 'PRE_REVIEW' THEN 3
+                          WHEN 'MANUAL_REVIEW' THEN 3
+                          WHEN 'SUBMITTED' THEN 4
+                          WHEN 'COMPLETED' THEN 5
+                          WHEN 'REJECTED' THEN 5
+                          WHEN 'CANCELED' THEN 5
+                          WHEN 'RETURNED' THEN 6
+                          ELSE -1
+                        END
                       )
                 `, [webhookStatus, idempotencyKey]);
             }
@@ -824,6 +1013,7 @@ class Database {
     ): Promise<void> {
         const pool = await this.postgresReady();
         if (!pool) throw new Error('Persistent PostgreSQL is required for Column wire tracking.');
+        const nextStatus = status.toUpperCase();
         await pool.query(`
             UPDATE column_wire_transfers
             SET status = $1, updated_at = NOW(), last_reconciled_at = NOW(),
@@ -831,9 +1021,33 @@ class Database {
             WHERE transfer_id = $2
               AND (
                 status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
-                OR $1 = 'RETURNED'
+                OR ($1 = 'RETURNED' AND status <> 'RETURNED')
               )
-        `, [status.toUpperCase(), transferId]);
+              AND (
+                status IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                OR CASE status
+                    WHEN 'SUBMISSION_PENDING' THEN 0
+                    WHEN 'SUBMISSION_IN_PROGRESS' THEN 1
+                    WHEN 'INITIATED' THEN 2
+                    WHEN 'HOLD' THEN 3
+                    WHEN 'PRE_REVIEW' THEN 3
+                    WHEN 'MANUAL_REVIEW' THEN 3
+                    WHEN 'SUBMITTED' THEN 4
+                    ELSE -1
+                   END <= CASE $1
+                    WHEN 'INITIATED' THEN 2
+                    WHEN 'HOLD' THEN 3
+                    WHEN 'PRE_REVIEW' THEN 3
+                    WHEN 'MANUAL_REVIEW' THEN 3
+                    WHEN 'SUBMITTED' THEN 4
+                    WHEN 'COMPLETED' THEN 5
+                    WHEN 'REJECTED' THEN 5
+                    WHEN 'CANCELED' THEN 5
+                    WHEN 'RETURNED' THEN 6
+                    ELSE -1
+                   END
+              )
+        `, [nextStatus, transferId]);
     }
 
     private static mapColumnWireTransfer(row: Record<string, any>): ColumnWireTransferRecord {

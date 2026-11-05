@@ -48,6 +48,39 @@ describe('Column wire receipt', () => {
         expect(JSON.stringify(receipt)).not.toMatch(/idempotency|userId|transferId|bankAccountId|counterpartyId|IMAD|OMAD/i);
     });
 
+    test('keeps submitted and returned provider states distinct from recipient bank confirmation', () => {
+        const transfer: ColumnWireTransferRecord = {
+            idempotencyKey: 'secret-idempotency-key',
+            reference: 'VTX-1A2B3C4D',
+            userId: 'internal-user-id',
+            transferId: 'wire_internal_provider_id',
+            amountCents: 12550,
+            currencyCode: 'USD',
+            recipientName: 'Example Recipient',
+            bankAccountId: 'bacc_internal',
+            counterpartyId: 'cpty_internal',
+            description: 'Invoice payment',
+            status: 'SUBMITTED',
+            lastErrorCode: null,
+            splitReference: null,
+            splitLeg: null,
+            grossAmountCents: null,
+            createdAt: new Date('2026-10-31T12:00:00.000Z'),
+            updatedAt: new Date('2026-10-31T12:01:00.000Z'),
+            lastReconciledAt: null,
+        };
+
+        const submitted = toColumnWireReceipt(transfer);
+        expect(submitted.status).toBe('SUBMITTED');
+        expect(submitted.providerStatus).toBe('SUBMITTED');
+        expect(submitted.recipientBankConfirmed).toBe(false);
+
+        const returned = toColumnWireReceipt({ ...transfer, status: 'RETURNED' });
+        expect(returned.status).toBe('RETURNED');
+        expect(returned.providerStatus).toBe('RETURNED');
+        expect(returned.recipientBankConfirmed).toBe(false);
+    });
+
     test('preserves non-completed provider statuses', () => {
         const transfer: ColumnWireTransferRecord = {
             idempotencyKey: 'secret-idempotency-key',

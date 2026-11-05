@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import app from '../src/index';
 import Database from '../src/services/database';
 import AuthService from '../src/services/authService';
+import PostgresService from '../src/services/postgresService';
 
 async function signupWithOtp(payload: { phone: string; [key: string]: unknown }) {
     await request(app).post('/api/auth/request-otp').send({ phone: payload.phone }).expect(200);
@@ -12,8 +13,26 @@ async function signupWithOtp(payload: { phone: string; [key: string]: unknown })
 }
 
 describe('Auth and OTP flows', () => {
+    if (process.env.POSTGRES_INTEGRATION_TESTS === 'true') {
+        test('runs against PostgreSQL rather than the file-backed test adapter', () => {
+            expect(Database.getPersistenceMode()).toBe('postgres');
+        });
+    }
+
     beforeEach(async () => {
         await Database.resetAll();
+    });
+
+    test('health endpoint reports database readiness without exposing connection details', async () => {
+        const response = await request(app).get('/api/health');
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({
+            status: 'ok',
+            database: Database.getPersistenceMode(),
+        });
+        expect(response.headers['cache-control']).toBe('no-store');
+        expect(JSON.stringify(response.body)).not.toMatch(/postgresql:\/\/|password|secret/i);
     });
 
     test('environment status reports the environment and disabled wire state without caching', async () => {
@@ -204,6 +223,59 @@ describe('Auth and OTP flows', () => {
         delete process.env.COLUMN_ENABLED;
     });
 
+    test('concurrent PIN failures increment atomically and establish lockout', async () => {
+        const phone = '555-1031';
+        const signup = await signupWithOtp({
+            phone, pin: '2468', deviceId: 'pin-race-device', deviceName: 'test'
+        });
+        expect(signup.status).toBe(201);
+        const user = await Database.getUserByPhone(phone);
+        if (!user) throw new Error('Test user was not created');
+
+        const outcomes = await Promise.all(
+            Array.from({ length: 5 }, () => Database.recordPinFailure(user.id, 5, 15))
+        );
+        const refreshed = await Database.getUserByPhone(phone);
+        expect(outcomes).toHaveLength(5);
+        expect(refreshed?.pinFailedAttempts).toBe(5);
+        expect(refreshed?.pinLockedUntil?.getTime()).toBeGreaterThan(Date.now());
+        await expect(AuthService.verifyPINWithLockout(phone, '2468')).rejects.toThrow(/locked/i);
+    });
+
+    test('PIN success cannot clear an active lockout', async () => {
+        const phone = '555-1032';
+        const signup = await signupWithOtp({
+            phone, pin: '1357', deviceId: 'pin-lock-device', deviceName: 'test'
+        });
+        expect(signup.status).toBe(201);
+        const user = await Database.getUserByPhone(phone);
+        if (!user) throw new Error('Test user was not created');
+
+        await Database.updateUser(user.id, {
+            pinFailedAttempts: 5,
+            pinLockedUntil: new Date(Date.now() + 60_000),
+        });
+        await expect(AuthService.verifyPINWithLockout(phone, '1357')).rejects.toThrow(/locked/i);
+        const lockedUser = await Database.getUserByPhone(phone);
+        expect(lockedUser?.pinFailedAttempts).toBe(5);
+        expect(lockedUser?.pinLockedUntil?.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    test('WebAuthn challenges are one-time and expired challenges are rejected', async () => {
+        const phone = '555-1033';
+        await Database.createWebAuthnChallenge(phone, 'single-use-challenge');
+        const first = await Database.consumeWebAuthnChallenge(phone, 120);
+        const replay = await Database.consumeWebAuthnChallenge(phone, 120);
+        expect(first?.challenge).toBe('single-use-challenge');
+        expect(replay).toBeUndefined();
+
+        await Database.createWebAuthnChallenge(phone, 'expired-challenge');
+        const expired = await Database.consumeWebAuthnChallenge(phone, 0);
+        expect(expired).toBeUndefined();
+        const expiredReplay = await Database.consumeWebAuthnChallenge(phone, 120);
+        expect(expiredReplay).toBeUndefined();
+    });
+
     test('PIN lockout after repeated failures', async () => {
         const phone = '555-0003';
         await signupWithOtp({ phone, pin: '9999', walletAddress: '0xabc', encryptedPrivateKey: 'enc', deviceId: 'dev2', deviceName: 'test' });
@@ -237,6 +309,74 @@ describe('Auth and OTP flows', () => {
 
         expect(reuse.status).toBe(401);
         expect(reuse.body.error).toMatch(/already associated/i);
+    });
+
+    if (process.env.POSTGRES_INTEGRATION_TESTS === 'true') {
+        test('global device-ID migration refuses existing cross-account duplicates', async () => {
+            const pool = PostgresService.getPool();
+            if (!pool) throw new Error('PostgreSQL pool is not configured');
+
+            const userIds = ['migration-duplicate-user-a', 'migration-duplicate-user-b'];
+            try {
+                await PostgresService.ensureSchema();
+                await pool.query('DROP INDEX IF EXISTS devices_device_id_unique_idx');
+                for (let i = 0; i < userIds.length; i++) {
+                    await pool.query(
+                        'INSERT INTO users (id, phone, pin_hash, wallet_address, encrypted_private_key) VALUES ($1, $2, $3, NULL, NULL)',
+                        [userIds[i], `+1555999000${i}`, 'test-hash']
+                    );
+                    await pool.query(
+                        'INSERT INTO devices (id, user_id, device_id, device_name, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5, $6)',
+                        [`migration-duplicate-device-${i}`, userIds[i], 'legacy-shared-device-id', 'migration test', '127.0.0.1', 'jest']
+                    );
+                }
+
+                (PostgresService as unknown as { schemaPromise: Promise<boolean> | null }).schemaPromise = null;
+                await expect(PostgresService.ensureSchema()).resolves.toBe(false);
+            } finally {
+                await pool.query('DELETE FROM users WHERE id = ANY($1::text[])', [userIds]);
+                (PostgresService as unknown as { schemaPromise: Promise<boolean> | null }).schemaPromise = null;
+                await expect(PostgresService.ensureSchema()).resolves.toBe(true);
+            }
+        });
+    }
+
+    test('concurrent cross-account device registration allows only one owner', async () => {
+        const firstUser = await signupWithOtp({
+            phone: '555-1021', pin: '1234', deviceId: 'seed-device-1', deviceName: 'first'
+        });
+        const secondUser = await signupWithOtp({
+            phone: '555-1022', pin: '5678', deviceId: 'seed-device-2', deviceName: 'second'
+        });
+        expect(firstUser.status).toBe(201);
+        expect(secondUser.status).toBe(201);
+
+        const first = await Database.getUserByPhone('555-1021');
+        const second = await Database.getUserByPhone('555-1022');
+        if (!first || !second) throw new Error('Test users were not created');
+
+        const device = (id: string, userId: string) => ({
+            id,
+            userId,
+            deviceId: 'contended-device-id',
+            deviceName: 'concurrent test device',
+            ipAddress: '127.0.0.1',
+            userAgent: 'jest',
+            authorized: true,
+            lastActivity: new Date(),
+            createdAt: new Date(),
+        });
+
+        const outcomes = await Promise.allSettled([
+            Database.createDevice(device('contended-first', first.id)),
+            Database.createDevice(device('contended-second', second.id)),
+        ]);
+        expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+        expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1);
+
+        const stored = await Database.getDeviceByDeviceId('contended-device-id');
+        expect(stored).toBeDefined();
+        expect([first.id, second.id]).toContain(stored!.userId);
     });
 
     test('rejects a valid JWT when its user does not own the referenced device', async () => {

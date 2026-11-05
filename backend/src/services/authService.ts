@@ -54,40 +54,38 @@ class AuthService {
         return Database.createUser(user);
     }
 
-    static async authenticateUser(phone: string, pin: string, deviceId: string, deviceName: string, ipAddress: string, userAgent: string): Promise<{ user: User; token: string; device: Device }> {
+    static async verifyPINWithLockout(phone: string, pin: string): Promise<boolean> {
         const user = await Database.getUserByPhone(phone);
-        if (!user) {
-            throw new Error('User not found');
-        }
-
-        // Check for lockout
-        const now = new Date();
-        if (user.pinLockedUntil && user.pinLockedUntil > now) {
+        if (!user) throw new Error('User not found');
+        if (user.pinLockedUntil && user.pinLockedUntil > new Date()) {
             throw new Error('PIN locked. Try later');
         }
 
         const pinMatches = await this.verifyPIN(pin, user.pinHash);
         if (!pinMatches) {
-            // increment failed attempts
-            const attempts = (user.pinFailedAttempts || 0) + 1;
-            const updates: Partial<User> = { pinFailedAttempts: attempts };
-            // lock account if threshold reached
-            const THRESHOLD = parseInt(process.env.PIN_FAIL_THRESHOLD || '5', 10);
-            const LOCK_MINUTES = parseInt(process.env.PIN_FAIL_LOCK_MINUTES || '15', 10);
-            if (attempts >= THRESHOLD) {
-                updates.pinLockedUntil = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
-            }
-            await Database.updateUser(user.id, updates);
-            throw new Error('Invalid PIN');
+            const threshold = Number.parseInt(process.env.PIN_FAIL_THRESHOLD || '5', 10);
+            const lockMinutes = Number.parseInt(process.env.PIN_FAIL_LOCK_MINUTES || '15', 10);
+            await Database.recordPinFailure(user.id, threshold, lockMinutes);
+            return false;
         }
 
-        // reset failed attempts on success
-        if (user.pinFailedAttempts && user.pinFailedAttempts > 0) {
-            await Database.updateUser(user.id, { pinFailedAttempts: 0, pinLockedUntil: null });
+        // Always attempt the conditional reset, even if the fetched user snapshot showed
+        // zero failures. A concurrent failed attempt may have established a lock meanwhile.
+        const reset = await Database.resetPinFailuresIfUnlocked(user.id);
+        if (!reset) {
+            throw new Error('PIN locked. Try later');
         }
+        return true;
+    }
+
+    static async authenticateUser(phone: string, pin: string, deviceId: string, deviceName: string, ipAddress: string, userAgent: string): Promise<{ user: User; token: string; device: Device }> {
+        const user = await Database.getUserByPhone(phone);
+        if (!user) throw new Error('User not found');
+        const pinMatches = await this.verifyPINWithLockout(phone, pin);
+        if (!pinMatches) throw new Error('Invalid PIN');
 
         // Get or create device
-        let device = await Database.getDeviceById(deviceId);
+        let device = await Database.getDeviceByDeviceId(deviceId);
         if (!device) {
             device = {
                 id: deviceId,
@@ -144,7 +142,7 @@ class AuthService {
             throw new Error('User not found');
         }
 
-        let device = await Database.getDeviceById(deviceId);
+        let device = await Database.getDeviceByDeviceId(deviceId);
         if (!device) {
             device = {
                 id: deviceId,
