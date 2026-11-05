@@ -2,6 +2,7 @@ import request from 'supertest';
 import crypto from 'crypto';
 import app from '../src/index';
 import Database from '../src/services/database';
+import AuthService from '../src/services/authService';
 
 async function signupWithOtp(payload: { phone: string; [key: string]: unknown }) {
     await request(app).post('/api/auth/request-otp').send({ phone: payload.phone }).expect(200);
@@ -217,6 +218,46 @@ describe('Auth and OTP flows', () => {
         const locked = await request(app).post('/api/auth/login').send({ phone, pin: '9999', deviceId: 'dev2', deviceName: 'test' });
         expect(locked.status).toBe(401);
         expect(locked.body.error).toMatch(/locked/i);
+    });
+
+    test('prevents a different account from reusing an existing device ID', async () => {
+        const first = await signupWithOtp({
+            phone: '555-1011', pin: '1234', deviceId: 'shared-device', deviceName: 'first'
+        });
+        expect(first.status).toBe(201);
+
+        const second = await signupWithOtp({
+            phone: '555-1012', pin: '5678', deviceId: 'second-device', deviceName: 'second'
+        });
+        expect(second.status).toBe(201);
+
+        const reuse = await request(app)
+            .post('/api/auth/login')
+            .send({ phone: '555-1012', pin: '5678', deviceId: 'shared-device', deviceName: 'second' });
+
+        expect(reuse.status).toBe(401);
+        expect(reuse.body.error).toMatch(/already associated/i);
+    });
+
+    test('rejects a valid JWT when its user does not own the referenced device', async () => {
+        const first = await signupWithOtp({
+            phone: '555-1013', pin: '1234', deviceId: 'owned-device', deviceName: 'first'
+        });
+        const second = await signupWithOtp({
+            phone: '555-1014', pin: '5678', deviceId: 'other-device', deviceName: 'second'
+        });
+        expect(first.status).toBe(201);
+        expect(second.status).toBe(201);
+
+        const secondUser = await Database.getUserByPhone('555-1014');
+        if (!secondUser) throw new Error('Second test user was not created');
+        const mismatchedToken = AuthService.generateAuthToken(secondUser.id, 'owned-device');
+
+        const response = await request(app)
+            .get('/api/devices')
+            .set('Authorization', `Bearer ${mismatchedToken}`);
+
+        expect(response.status).toBe(403);
     });
 
     test('device revoke blocks token and notifications are available', async () => {
