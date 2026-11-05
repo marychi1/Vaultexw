@@ -144,7 +144,7 @@ class AuthService {
             throw new Error('User not found');
         }
 
-        let device = await Database.getDeviceById(deviceId);
+        let device = await Database.getDeviceByDeviceId(deviceId);
         if (!device) {
             device = {
                 id: deviceId,
