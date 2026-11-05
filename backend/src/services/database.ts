@@ -340,6 +340,78 @@ class Database {
         return user;
     }
 
+    static async recordPinFailure(
+        userId: string,
+        threshold: number,
+        lockMinutes: number
+    ): Promise<{ failedAttempts: number; lockedUntil: Date | null }> {
+        const safeThreshold = Math.max(1, Math.floor(threshold));
+        const safeLockMinutes = Math.max(1, Math.floor(lockMinutes));
+        const pool = await this.postgresReady();
+        if (pool) {
+            const result = await pool.query(`
+                UPDATE users
+                SET pin_failed_attempts = CASE
+                        WHEN pin_locked_until IS NOT NULL AND pin_locked_until > NOW()
+                            THEN pin_failed_attempts
+                        ELSE pin_failed_attempts + 1
+                    END,
+                    pin_locked_until = CASE
+                        WHEN pin_locked_until IS NOT NULL AND pin_locked_until > NOW()
+                            THEN pin_locked_until
+                        WHEN pin_failed_attempts + 1 >= $2
+                            THEN NOW() + ($3 * INTERVAL '1 minute')
+                        ELSE NULL
+                    END
+                WHERE id = $1
+                RETURNING pin_failed_attempts, pin_locked_until
+            `, [userId, safeThreshold, safeLockMinutes]);
+            const row = result.rows[0];
+            if (!row) throw new Error('User not found');
+            return {
+                failedAttempts: Number(row.pin_failed_attempts),
+                lockedUntil: this.hydrateDate(row.pin_locked_until) as Date | null,
+            };
+        }
+
+        const user = this.users.find((entry) => entry.id === userId);
+        if (!user) throw new Error('User not found');
+        const now = new Date();
+        if (!user.pinLockedUntil || user.pinLockedUntil <= now) {
+            user.pinFailedAttempts = (user.pinFailedAttempts || 0) + 1;
+            user.pinLockedUntil = user.pinFailedAttempts >= safeThreshold
+                ? new Date(now.getTime() + safeLockMinutes * 60 * 1000)
+                : null;
+            this.persist();
+        }
+        return {
+            failedAttempts: user.pinFailedAttempts || 0,
+            lockedUntil: user.pinLockedUntil || null,
+        };
+    }
+
+    static async resetPinFailuresIfUnlocked(userId: string): Promise<boolean> {
+        const pool = await this.postgresReady();
+        if (pool) {
+            const result = await pool.query(`
+                UPDATE users
+                SET pin_failed_attempts = 0, pin_locked_until = NULL
+                WHERE id = $1
+                  AND (pin_locked_until IS NULL OR pin_locked_until <= NOW())
+                RETURNING id
+            `, [userId]);
+            return result.rowCount === 1;
+        }
+
+        const user = this.users.find((entry) => entry.id === userId);
+        if (!user) return false;
+        if (user.pinLockedUntil && user.pinLockedUntil > new Date()) return false;
+        user.pinFailedAttempts = 0;
+        user.pinLockedUntil = null;
+        this.persist();
+        return true;
+    }
+
     // Device operations
     static async getDeviceById(id: string): Promise<Device | undefined> {
         const pool = await this.postgresReady();
@@ -573,23 +645,36 @@ class Database {
         return entry;
     }
 
-    static async getWebAuthnChallenge(phone: string) {
+    static async consumeWebAuthnChallenge(phone: string, ttlSeconds = 120) {
+        const safeTtlSeconds = Math.max(0, Math.floor(ttlSeconds));
         const pool = await this.postgresReady();
         if (pool) {
-            const result = await pool.query('SELECT * FROM webauthn_challenges WHERE phone = $1', [phone]);
-            return result.rows[0] ? { phone: result.rows[0].phone, challenge: result.rows[0].challenge, createdAt: result.rows[0].created_at } : undefined;
+            // DELETE ... RETURNING makes challenge consumption atomic: only one concurrent
+            // request can obtain the challenge. Freshness is evaluated by the database clock.
+            const result = await pool.query(`
+                DELETE FROM webauthn_challenges
+                WHERE phone = $1
+                RETURNING phone, challenge, created_at,
+                    (created_at >= NOW() - ($2 * INTERVAL '1 second')) AS is_fresh
+            `, [phone, safeTtlSeconds]);
+            const row = result.rows[0];
+            if (!row || row.is_fresh !== true) return undefined;
+            return {
+                phone: row.phone,
+                challenge: row.challenge,
+                createdAt: this.hydrateDate(row.created_at) as Date,
+            };
         }
-        return this.webauthnChallenges.find((c) => c.phone === phone);
-    }
 
-    static async removeWebAuthnChallenge(phone: string) {
-        const pool = await this.postgresReady();
-        if (pool) {
-            await pool.query('DELETE FROM webauthn_challenges WHERE phone = $1', [phone]);
-            return;
-        }
-        this.webauthnChallenges = this.webauthnChallenges.filter((c) => c.phone !== phone);
+        // In-memory fallback also removes the entry synchronously before returning it,
+        // so concurrent consumers cannot both validate the same challenge.
+        const index = this.webauthnChallenges.findIndex((entry) => entry.phone === phone);
+        if (index < 0) return undefined;
+        const [entry] = this.webauthnChallenges.splice(index, 1);
         this.persist();
+        const ageMs = Date.now() - entry.createdAt.getTime();
+        if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > safeTtlSeconds * 1000) return undefined;
+        return entry;
     }
 
     // Credentials
