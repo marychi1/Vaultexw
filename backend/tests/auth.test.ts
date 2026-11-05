@@ -126,6 +126,19 @@ describe('Auth and OTP flows', () => {
         expect(verifyPin.body.verified).toBe(true);
     });
 
+    test('verify-pin applies the same failed-attempt lockout as login', async () => {
+        const phone = '555-0091';
+        await signupWithOtp({ phone, pin: '2468', deviceId: 'verify-pin-lockout', deviceName: 'test' });
+
+        for (let attempt = 0; attempt < 5; attempt++) {
+            await request(app).post('/api/auth/verify-pin').send({ phone, pin: '0000' }).expect(401);
+        }
+
+        const locked = await request(app).post('/api/auth/verify-pin').send({ phone, pin: '2468' });
+        expect(locked.status).toBe(423);
+        expect(locked.body.error).toMatch(/locked/i);
+    });
+
     test('Column transfer lookup requires auth and remains disabled by default', async () => {
         const unauthorized = await request(app).get('/api/column/transfers/wire_test123');
         expect(unauthorized.status).toBe(401);

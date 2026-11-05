@@ -11,14 +11,15 @@ const JWT_EXPIRY = '24h';
 
 class AuthService {
     static generateAuthToken(userId: string, deviceId: string): string {
-        const token = jwt.sign({ userId, deviceId }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+        const token = jwt.sign({ userId, deviceId }, JWT_SECRET, { expiresIn: JWT_EXPIRY, algorithm: 'HS256' });
         return token;
     }
 
     static verifyAuthToken(token: string): { userId: string; deviceId: string } | null {
         try {
-            const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; deviceId: string };
-            return decoded;
+            const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as { userId?: unknown; deviceId?: unknown };
+            if (typeof decoded.userId !== 'string' || !decoded.userId || typeof decoded.deviceId !== 'string' || !decoded.deviceId) return null;
+            return { userId: decoded.userId, deviceId: decoded.deviceId };
         } catch {
             return null;
         }
@@ -52,6 +53,35 @@ class AuthService {
         };
 
         return Database.createUser(user);
+    }
+
+
+    static async verifyPINWithLockout(phone: string, pin: string): Promise<boolean> {
+        const user = await Database.getUserByPhone(phone);
+        if (!user) return false;
+
+        const now = new Date();
+        if (user.pinLockedUntil && user.pinLockedUntil > now) {
+            throw new Error('PIN locked. Try later');
+        }
+
+        const pinMatches = await this.verifyPIN(pin, user.pinHash);
+        if (!pinMatches) {
+            const attempts = (user.pinFailedAttempts || 0) + 1;
+            const threshold = Math.max(1, Number.parseInt(process.env.PIN_FAIL_THRESHOLD || '5', 10) || 5);
+            const lockMinutes = Math.max(1, Number.parseInt(process.env.PIN_FAIL_LOCK_MINUTES || '15', 10) || 15);
+            const updates: Partial<User> = { pinFailedAttempts: attempts };
+            if (attempts >= threshold) {
+                updates.pinLockedUntil = new Date(Date.now() + lockMinutes * 60 * 1000);
+            }
+            await Database.updateUser(user.id, updates);
+            return false;
+        }
+
+        if (user.pinFailedAttempts || user.pinLockedUntil) {
+            await Database.updateUser(user.id, { pinFailedAttempts: 0, pinLockedUntil: null });
+        }
+        return true;
     }
 
     static async authenticateUser(phone: string, pin: string, deviceId: string, deviceName: string, ipAddress: string, userAgent: string): Promise<{ user: User; token: string; device: Device }> {
