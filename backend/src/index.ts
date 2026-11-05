@@ -285,7 +285,7 @@ app.get('/api/auth/customer-link', async (req: Request, res: Response) => {
 // ===== PIN Verification (for quick checks) =====
 app.post('/api/auth/verify-pin', async (req: Request, res: Response) => {
   const { phone, pin } = req.body;
-  if (typeof phone !== 'string' || typeof pin !== 'string' || !phone.trim() || !/^\\d{4,8}$/.test(pin)) {
+  if (typeof phone !== 'string' || typeof pin !== 'string' || !phone.trim() || !/^\d{4,8}$/.test(pin)) {
     return res.status(400).json({ error: 'Phone and valid PIN required' });
   }
 
