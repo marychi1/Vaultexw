@@ -655,7 +655,7 @@ class Database {
                 DELETE FROM webauthn_challenges
                 WHERE phone = $1
                 RETURNING phone, challenge, created_at,
-                    (created_at >= NOW() - ($2 * INTERVAL '1 second')) AS is_fresh
+                    (created_at > NOW() - ($2 * INTERVAL '1 second')) AS is_fresh
             `, [phone, safeTtlSeconds]);
             const row = result.rows[0];
             if (!row || row.is_fresh !== true) return undefined;
@@ -673,7 +673,7 @@ class Database {
         const [entry] = this.webauthnChallenges.splice(index, 1);
         this.persist();
         const ageMs = Date.now() - entry.createdAt.getTime();
-        if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > safeTtlSeconds * 1000) return undefined;
+        if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs >= safeTtlSeconds * 1000) return undefined;
         return entry;
     }
 
