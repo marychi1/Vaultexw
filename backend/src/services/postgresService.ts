@@ -110,11 +110,25 @@ class PostgresService {
           bank_account_id TEXT NOT NULL,
           counterparty_id TEXT NOT NULL,
           description TEXT,
+          split_reference TEXT,
+          split_leg TEXT CHECK (split_leg IS NULL OR split_leg IN ('reserve', 'recipient')),
+          gross_amount_cents BIGINT CHECK (gross_amount_cents IS NULL OR gross_amount_cents > 0),
           status TEXT NOT NULL,
           last_error_code TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           last_reconciled_at TIMESTAMPTZ
+        );
+
+        CREATE TABLE IF NOT EXISTS column_wire_authorizations (
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          counterparty_id TEXT NOT NULL,
+          bank_account_id TEXT NOT NULL,
+          recipient_name TEXT NOT NULL,
+          enabled BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_id, counterparty_id)
         );
 
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS recipient_address TEXT;
@@ -125,6 +139,9 @@ class PostgresService {
         ALTER TABLE users ALTER COLUMN encrypted_private_key DROP NOT NULL;
         ALTER TABLE column_wire_transfers ADD COLUMN IF NOT EXISTS reference TEXT;
         ALTER TABLE column_wire_transfers ADD COLUMN IF NOT EXISTS recipient_name TEXT;
+        ALTER TABLE column_wire_transfers ADD COLUMN IF NOT EXISTS split_reference TEXT;
+        ALTER TABLE column_wire_transfers ADD COLUMN IF NOT EXISTS split_leg TEXT;
+        ALTER TABLE column_wire_transfers ADD COLUMN IF NOT EXISTS gross_amount_cents BIGINT;
         UPDATE column_wire_transfers
           SET reference = 'VTX-' || UPPER(SUBSTRING(MD5(random()::text || clock_timestamp()::text) FROM 1 FOR 16))
           WHERE reference IS NULL;
@@ -140,6 +157,10 @@ class PostgresService {
         CREATE INDEX IF NOT EXISTS column_wire_transfers_user_created_idx ON column_wire_transfers(user_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS column_wire_transfers_status_idx ON column_wire_transfers(status);
         CREATE UNIQUE INDEX IF NOT EXISTS column_wire_transfers_reference_idx ON column_wire_transfers(reference);
+        CREATE INDEX IF NOT EXISTS column_wire_transfers_split_reference_idx
+          ON column_wire_transfers(split_reference);
+        CREATE INDEX IF NOT EXISTS column_wire_authorizations_enabled_idx
+          ON column_wire_authorizations(user_id, enabled);
       `);
 
             return true;
@@ -187,10 +208,12 @@ class PostgresService {
             const result = await pool.query(`
                 SELECT
                     to_regclass('public.column_webhook_events') IS NOT NULL AS webhook_events_ready,
-                    to_regclass('public.column_wire_transfers') IS NOT NULL AS wire_transfers_ready
+                    to_regclass('public.column_wire_transfers') IS NOT NULL AS wire_transfers_ready,
+                    to_regclass('public.column_wire_authorizations') IS NOT NULL AS wire_authorizations_ready
             `);
             return result.rows[0]?.webhook_events_ready === true &&
-                result.rows[0]?.wire_transfers_ready === true;
+                result.rows[0]?.wire_transfers_ready === true &&
+                result.rows[0]?.wire_authorizations_ready === true;
         } catch (error) {
             console.error('[Postgres] Readiness check failed:', error);
             return false;

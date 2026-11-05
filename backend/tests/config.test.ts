@@ -72,7 +72,7 @@ describe('backend config', () => {
         expect(getProductionConfigErrors(config)).toEqual([]);
     });
 
-    test('keeps live Column wires disabled until ownership controls are implemented', () => {
+    test('keeps live Column wires hard-disabled even when deployment requests them', () => {
         process.env.NODE_ENV = 'production';
         process.env.JWT_SECRET = 'a'.repeat(64);
         process.env.ENCRYPTION_KEY = 'b'.repeat(64);
@@ -80,6 +80,7 @@ describe('backend config', () => {
         process.env.COLUMN_LIVE_WIRES_ENABLED = 'true';
         process.env.COLUMN_ENABLED = 'true';
         process.env.COLUMN_API_KEY = 'column-api-key';
+        process.env.COLUMN_RESERVE_COUNTERPARTY_ID = 'cpty_wells_fargo';
         process.env.COLUMN_WEBHOOK_SECRET = 'column-webhook-secret';
         process.env.COLUMN_WEBHOOK_ENDPOINT_ID = 'endpoint-id';
         process.env.DATABASE_DRIVER = 'postgres';

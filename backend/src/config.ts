@@ -21,6 +21,7 @@ export interface BackendConfig {
     twilioFromPhone?: string;
     columnApiKey?: string;
     columnBaseUrl: string;
+    columnReserveCounterpartyId?: string;
     columnWebhookSecret?: string;
     columnWebhookEndpointId?: string;
     columnEnabled: boolean;
@@ -55,12 +56,14 @@ export function getBackendConfig(): BackendConfig {
     const twilioFromPhone = process.env.TWILIO_FROM_PHONE?.trim() || undefined;
     const columnApiKey = process.env.COLUMN_API_KEY?.trim() || undefined;
     const columnBaseUrl = process.env.COLUMN_BASE_URL?.trim() || 'https://api.column.com';
+    const columnReserveCounterpartyId = process.env.COLUMN_RESERVE_COUNTERPARTY_ID?.trim() || undefined;
     const columnWebhookSecret = process.env.COLUMN_WEBHOOK_SECRET?.trim() || undefined;
     const columnWebhookEndpointId = process.env.COLUMN_WEBHOOK_ENDPOINT_ID?.trim() || undefined;
     const columnEnabled = process.env.COLUMN_ENABLED === 'true' && Boolean(columnApiKey);
-    const liveWireOwnershipControlsImplemented = false;
+    // Keep this hard-disabled until live operations are explicitly approved.
+    const liveWireSubmissionsApproved = false;
     const columnLiveWiresEnabled =
-        liveWireOwnershipControlsImplemented &&
+        liveWireSubmissionsApproved &&
         process.env.COLUMN_LIVE_WIRES_ENABLED === 'true' && nodeEnv === 'production';
 
     return {
@@ -81,6 +84,7 @@ export function getBackendConfig(): BackendConfig {
         twilioFromPhone,
         columnApiKey,
         columnBaseUrl,
+        columnReserveCounterpartyId,
         columnWebhookSecret,
         columnWebhookEndpointId,
         columnEnabled,
@@ -102,6 +106,9 @@ export function getProductionConfigErrors(config = getBackendConfig()): string[]
     }
     if (config.columnEnabled && (!config.columnApiKey || !config.columnWebhookSecret || !config.columnWebhookEndpointId)) {
         errors.push('Column API, webhook secret, and endpoint ID are required when Column is enabled');
+    }
+    if (process.env.COLUMN_LIVE_WIRES_ENABLED === 'true' && !config.columnReserveCounterpartyId) {
+        errors.push('COLUMN_RESERVE_COUNTERPARTY_ID is required when live wire submissions are requested');
     }
     if (config.columnLiveWiresEnabled && (!config.columnEnabled || !config.postgresEnabled)) {
         errors.push('Live Column wires require Column and PostgreSQL to be enabled');
