@@ -1,5 +1,6 @@
 import { Fido2Lib } from 'fido2-lib';
 import Database from './database';
+import { getBackendConfig } from '../config';
 
 function toBase64Url(buf: Buffer) {
     return buf.toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -13,7 +14,7 @@ function fromBase64Url(base64url: string) {
 
 const f2l = new Fido2Lib({
     timeout: 60000,
-    rpId: 'localhost',
+    rpId: getBackendConfig().webauthnRpId,
     rpName: 'Vaultex',
     challengeSize: 64,
     attestation: 'direct',
@@ -53,7 +54,7 @@ export default class WebAuthnService {
 
         const expected = {
             challenge: fromBase64Url(storedChallenge.challenge),
-            origin: 'http://localhost:5173',
+            origin: getBackendConfig().webauthnOrigin,
             factor: 'either',
         } as any;
 
@@ -108,7 +109,7 @@ export default class WebAuthnService {
 
         const expected = {
             challenge: fromBase64Url(storedChallenge.challenge),
-            origin: 'http://localhost:5173',
+            origin: getBackendConfig().webauthnOrigin,
             factor: 'either',
             publicKey: credential.publicKey,
             prevCounter: credential.counter,

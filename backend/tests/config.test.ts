@@ -9,6 +9,8 @@ describe('backend config', () => {
 
     test('uses environment overrides in production and enables Neon/Postgres when configured', () => {
         process.env.NODE_ENV = 'production';
+        process.env.WEBAUTHN_RP_ID = 'vaultexwallet.io';
+        process.env.WEBAUTHN_ORIGIN = 'https://vaultexwallet.io';
         delete process.env.COLUMN_LIVE_WIRES_ENABLED;
         delete process.env.CORS_ORIGIN;
         process.env.JWT_SECRET = 'prod-secret';
@@ -74,6 +76,8 @@ describe('backend config', () => {
 
     test('keeps live Column wires disabled until ownership controls are implemented', () => {
         process.env.NODE_ENV = 'production';
+        process.env.WEBAUTHN_RP_ID = 'vaultexwallet.io';
+        process.env.WEBAUTHN_ORIGIN = 'https://vaultexwallet.io';
         process.env.JWT_SECRET = 'a'.repeat(64);
         process.env.ENCRYPTION_KEY = 'b'.repeat(64);
         process.env.CORS_ORIGIN = 'https://example.com';
@@ -90,6 +94,15 @@ describe('backend config', () => {
         expect(config.columnEnabled).toBe(true);
         expect(config.columnLiveWiresEnabled).toBe(false);
         expect(getProductionConfigErrors(config)).toEqual([]);
+    });
+
+    test('requires production WebAuthn relying-party configuration', () => {
+        process.env.NODE_ENV = 'production';
+        delete process.env.WEBAUTHN_RP_ID;
+        delete process.env.WEBAUTHN_ORIGIN;
+
+        const errors = getProductionConfigErrors(getBackendConfig());
+        expect(errors).toContain('WEBAUTHN_RP_ID and WEBAUTHN_ORIGIN must be configured for the production domain');
     });
 
     test('does not require Twilio in production when console OTP is used', () => {
