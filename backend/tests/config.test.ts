@@ -37,6 +37,14 @@ describe('backend config', () => {
         expect(config.columnEnabled).toBe(false);
     });
 
+    test('does not fall back to a predictable JWT secret in production', () => {
+        process.env.NODE_ENV = 'production';
+        delete process.env.JWT_SECRET;
+        const config = getBackendConfig();
+        expect(config.jwtSecret).toBe('');
+        expect(getProductionConfigErrors(config)).toContain('JWT_SECRET must be a strong production secret');
+    });
+
     test('preserves configured production CORS origins and includes both Vaultex hosts', () => {
         process.env.NODE_ENV = 'production';
         process.env.CORS_ORIGIN = 'https://preview.example.com, https://vaultexwallet.io';
