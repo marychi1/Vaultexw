@@ -43,10 +43,22 @@ export function getBackendConfig(): BackendConfig {
     const supabaseEnabled = Boolean(supabaseUrl && supabaseAnonKey);
 
     const requestedDatabaseDriver = (process.env.DATABASE_DRIVER || 'file').toLowerCase();
-    const databaseDriver = nodeEnv === 'test'
+    const postgresIntegrationTests = nodeEnv === 'test' && process.env.POSTGRES_INTEGRATION_TESTS === 'true';
+    const databaseUrl = process.env.DATABASE_URL?.trim() || undefined;
+    if (postgresIntegrationTests) {
+        let databaseName = '';
+        try {
+            databaseName = databaseUrl ? decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\\//, '')) : '';
+        } catch {
+            throw new Error('PostgreSQL integration tests require a valid DATABASE_URL for a dedicated test database');
+        }
+        if (requestedDatabaseDriver !== 'postgres' || !databaseName || !/(?:^|[_-])test$/i.test(databaseName)) {
+            throw new Error('PostgreSQL integration tests require DATABASE_DRIVER=postgres and a dedicated database name ending in test');
+        }
+    }
+    const databaseDriver = nodeEnv === 'test' && !postgresIntegrationTests
         ? 'file'
         : requestedDatabaseDriver === 'postgres' ? 'postgres' : 'file';
-    const databaseUrl = process.env.DATABASE_URL?.trim() || undefined;
     const postgresEnabled = databaseDriver === 'postgres' && Boolean(databaseUrl);
     const configuredCorsOrigins = process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean)
         ?? (nodeEnv === 'production' ? [] : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173']);
