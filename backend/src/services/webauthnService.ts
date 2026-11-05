@@ -109,7 +109,7 @@ export default class WebAuthnService {
 
         const expected = {
             challenge: fromBase64Url(storedChallenge.challenge),
-            origin: 'http://localhost:5173',
+            origin: getBackendConfig().webauthnOrigin,
             factor: 'either',
             publicKey: credential.publicKey,
             prevCounter: credential.counter,
