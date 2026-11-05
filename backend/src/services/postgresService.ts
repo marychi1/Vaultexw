@@ -191,7 +191,8 @@ class PostgresService {
         if (!this.pool) {
             this.pool = new Pool({
                 connectionString: databaseUrl,
-                ssl: { rejectUnauthorized: true },
+                // Require certificate-validated TLS in production; local isolated test databases may not offer TLS.
+                ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : false,
             });
         }
 
