@@ -19,7 +19,7 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
         return res.status(401).json({ error: 'Invalid token' });
     }
 
-    const device = await Database.getDeviceById(decoded.deviceId);
+    const device = await Database.getDeviceByDeviceId(decoded.deviceId);
     if (!device || !device.authorized || device.userId !== decoded.userId) {
         return res.status(403).json({ error: 'Device access revoked or unauthorized' });
     }
