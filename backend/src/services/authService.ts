@@ -63,18 +63,17 @@ class AuthService {
 
         const pinMatches = await this.verifyPIN(pin, user.pinHash);
         if (!pinMatches) {
-            const attempts = (user.pinFailedAttempts || 0) + 1;
-            const threshold = parseInt(process.env.PIN_FAIL_THRESHOLD || '5', 10);
-            const lockMinutes = parseInt(process.env.PIN_FAIL_LOCK_MINUTES || '15', 10);
-            await Database.updateUser(user.id, {
-                pinFailedAttempts: attempts,
-                ...(attempts >= threshold ? { pinLockedUntil: new Date(Date.now() + lockMinutes * 60 * 1000) } : {}),
-            });
+            const threshold = Number.parseInt(process.env.PIN_FAIL_THRESHOLD || '5', 10);
+            const lockMinutes = Number.parseInt(process.env.PIN_FAIL_LOCK_MINUTES || '15', 10);
+            await Database.recordPinFailure(user.id, threshold, lockMinutes);
             return false;
         }
 
-        if (user.pinFailedAttempts && user.pinFailedAttempts > 0) {
-            await Database.updateUser(user.id, { pinFailedAttempts: 0, pinLockedUntil: null });
+        // Always attempt the conditional reset, even if the fetched user snapshot showed
+        // zero failures. A concurrent failed attempt may have established a lock meanwhile.
+        const reset = await Database.resetPinFailuresIfUnlocked(user.id);
+        if (!reset) {
+            throw new Error('PIN locked. Try later');
         }
         return true;
     }
