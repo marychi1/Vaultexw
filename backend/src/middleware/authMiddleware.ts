@@ -8,7 +8,9 @@ interface AuthRequest extends Request {
 }
 
 export const authMiddleware = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    const token = req.headers.authorization?.split(' ')[1];
+    const authorization = req.headers.authorization || '';
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    const token = match?.[1];
 
     if (!token) {
         return res.status(401).json({ error: 'No token provided' });
@@ -19,14 +21,19 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
         return res.status(401).json({ error: 'Invalid token' });
     }
 
-    const device = await Database.getDeviceById(decoded.deviceId);
-    if (!device || !device.authorized) {
-        return res.status(403).json({ error: 'Device access revoked or unauthorized' });
-    }
+    try {
+        const device = await Database.getDeviceById(decoded.deviceId);
+        if (!device || !device.authorized || device.userId !== decoded.userId) {
+            return res.status(403).json({ error: 'Device access revoked or unauthorized' });
+        }
 
-    req.userId = decoded.userId;
-    req.deviceId = decoded.deviceId;
-    next();
+        req.userId = decoded.userId;
+        req.deviceId = decoded.deviceId;
+        return next();
+    } catch (error) {
+        console.error('[Auth] Device authorization lookup failed:', error);
+        return res.status(503).json({ error: 'Unable to verify device authorization' });
+    }
 };
 
 export default authMiddleware;
