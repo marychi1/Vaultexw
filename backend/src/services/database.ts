@@ -369,6 +369,14 @@ class Database {
     }
 
     static async createDevice(device: Device): Promise<Device> {
+        const existing = await this.getDeviceByDeviceId(device.deviceId);
+        if (existing) {
+            if (existing.userId !== device.userId) {
+                throw new Error('Device is already associated with another account');
+            }
+            return existing;
+        }
+
         const pool = await this.postgresReady();
         if (pool) {
             await pool.query(`INSERT INTO devices (id,user_id,device_id,device_name,ip_address,user_agent,authorized,last_activity,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [device.id, device.userId, device.deviceId, device.deviceName, device.ipAddress, device.userAgent, device.authorized, device.lastActivity, device.createdAt]);
