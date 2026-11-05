@@ -609,7 +609,34 @@ class Database {
                         WHERE transfer_id = $2
                           AND (
                             status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
-                            OR $1 = 'RETURNED'
+                            OR ($1 = 'RETURNED' AND status <> 'RETURNED')
+                          )
+                          AND (
+                            status IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                            OR
+                            CASE status
+                              WHEN 'SUBMISSION_PENDING' THEN 0
+                              WHEN 'SUBMISSION_IN_PROGRESS' THEN 1
+                              WHEN 'INITIATED' THEN 2
+                              WHEN 'HOLD' THEN 3
+                              WHEN 'PRE_REVIEW' THEN 3
+                              WHEN 'MANUAL_REVIEW' THEN 3
+                              WHEN 'SUBMITTED' THEN 4
+                              ELSE -1
+                            END
+                            <=
+                            CASE $1
+                              WHEN 'INITIATED' THEN 2
+                              WHEN 'HOLD' THEN 3
+                              WHEN 'PRE_REVIEW' THEN 3
+                              WHEN 'MANUAL_REVIEW' THEN 3
+                              WHEN 'SUBMITTED' THEN 4
+                              WHEN 'COMPLETED' THEN 5
+                              WHEN 'REJECTED' THEN 5
+                              WHEN 'CANCELED' THEN 5
+                              WHEN 'RETURNED' THEN 6
+                              ELSE -1
+                            END
                           )
                     `, [status, event.transferId]);
                 }
@@ -756,23 +783,51 @@ class Database {
                 throw new Error('Column wire response could not be linked to its persisted request.');
             }
 
+            // A webhook can arrive before Column's create-transfer response is persisted.
+            // Replay every event for this exact provider transfer in receipt order; the
+            // transition guard prevents delayed earlier events from regressing its status.
             const events = await client.query(`
                 SELECT event_type FROM column_webhook_events
                 WHERE transfer_id = $1
-                ORDER BY received_at DESC
-                LIMIT 1
+                ORDER BY received_at ASC, id ASC
             `, [transfer.id]);
-            const webhookStatus = events.rows[0]
-                ? getColumnWireEventStatus(events.rows[0].event_type)
-                : undefined;
-            if (webhookStatus) {
+            for (const event of events.rows) {
+                const webhookStatus = getColumnWireEventStatus(event.event_type);
+                if (!webhookStatus) continue;
                 await client.query(`
                     UPDATE column_wire_transfers
                     SET status = $1, updated_at = NOW()
                     WHERE idempotency_key = $2
                       AND (
                         status NOT IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
-                        OR $1 = 'RETURNED'
+                        OR ($1 = 'RETURNED' AND status <> 'RETURNED')
+                      )
+                      AND (
+                        status IN ('COMPLETED', 'REJECTED', 'CANCELED', 'RETURNED')
+                        OR
+                        CASE status
+                          WHEN 'SUBMISSION_PENDING' THEN 0
+                          WHEN 'SUBMISSION_IN_PROGRESS' THEN 1
+                          WHEN 'INITIATED' THEN 2
+                          WHEN 'HOLD' THEN 3
+                          WHEN 'PRE_REVIEW' THEN 3
+                          WHEN 'MANUAL_REVIEW' THEN 3
+                          WHEN 'SUBMITTED' THEN 4
+                          ELSE -1
+                        END
+                        <=
+                        CASE $1
+                          WHEN 'INITIATED' THEN 2
+                          WHEN 'HOLD' THEN 3
+                          WHEN 'PRE_REVIEW' THEN 3
+                          WHEN 'MANUAL_REVIEW' THEN 3
+                          WHEN 'SUBMITTED' THEN 4
+                          WHEN 'COMPLETED' THEN 5
+                          WHEN 'REJECTED' THEN 5
+                          WHEN 'CANCELED' THEN 5
+                          WHEN 'RETURNED' THEN 6
+                          ELSE -1
+                        END
                       )
                 `, [webhookStatus, idempotencyKey]);
             }
