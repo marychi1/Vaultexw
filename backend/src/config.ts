@@ -8,6 +8,8 @@ export interface BackendConfig {
     jwtSecret: string;
     encryptionKey: string;
     nodeEnv: string;
+    webauthnRpId: string;
+    webauthnOrigin: string;
     supabaseUrl?: string;
     supabaseAnonKey?: string;
     supabaseEnabled: boolean;
@@ -29,6 +31,8 @@ export interface BackendConfig {
 
 export function getBackendConfig(): BackendConfig {
     const nodeEnv = process.env.NODE_ENV || 'development';
+    const webauthnRpId = process.env.WEBAUTHN_RP_ID?.trim() || (nodeEnv === 'production' ? '' : 'localhost');
+    const webauthnOrigin = process.env.WEBAUTHN_ORIGIN?.trim() || (nodeEnv === 'production' ? '' : 'http://localhost:5173');
 
     const port = Number(process.env.PORT || 3000);
     const jwtSecret = process.env.JWT_SECRET || (nodeEnv === 'production' ? '' : `${nodeEnv}-vaultex-jwt-secret`);
@@ -68,6 +72,8 @@ export function getBackendConfig(): BackendConfig {
         jwtSecret,
         encryptionKey,
         nodeEnv,
+        webauthnRpId,
+        webauthnOrigin,
         supabaseUrl,
         supabaseAnonKey,
         supabaseEnabled,
@@ -97,6 +103,10 @@ export function getProductionConfigErrors(config = getBackendConfig()): string[]
     }
     if (config.encryptionKey.length < 32 || config.encryptionKey.includes('vaultex-default')) {
         errors.push('ENCRYPTION_KEY must be configured as a strong production secret (at least 32 characters)');
+    }
+    if (!config.webauthnRpId || config.webauthnRpId === 'localhost' ||
+        !config.webauthnOrigin || config.webauthnOrigin.includes('localhost')) {
+        errors.push('WEBAUTHN_RP_ID and WEBAUTHN_ORIGIN must be configured for the production domain');
     }
     if (!config.postgresEnabled) errors.push('DATABASE_DRIVER=postgres and DATABASE_URL are required');
     if (config.corsOrigins.length === 0) errors.push('CORS_ORIGIN is required');
