@@ -239,6 +239,44 @@ describe('Auth and OTP flows', () => {
         expect(reuse.body.error).toMatch(/already associated/i);
     });
 
+    test('concurrent cross-account device registration allows only one owner', async () => {
+        const firstUser = await signupWithOtp({
+            phone: '555-1021', pin: '1234', deviceId: 'seed-device-1', deviceName: 'first'
+        });
+        const secondUser = await signupWithOtp({
+            phone: '555-1022', pin: '5678', deviceId: 'seed-device-2', deviceName: 'second'
+        });
+        expect(firstUser.status).toBe(201);
+        expect(secondUser.status).toBe(201);
+
+        const first = await Database.getUserByPhone('555-1021');
+        const second = await Database.getUserByPhone('555-1022');
+        if (!first || !second) throw new Error('Test users were not created');
+
+        const device = (id: string, userId: string) => ({
+            id,
+            userId,
+            deviceId: 'contended-device-id',
+            deviceName: 'concurrent test device',
+            ipAddress: '127.0.0.1',
+            userAgent: 'jest',
+            authorized: true,
+            lastActivity: new Date(),
+            createdAt: new Date(),
+        });
+
+        const outcomes = await Promise.allSettled([
+            Database.createDevice(device('contended-first', first.id)),
+            Database.createDevice(device('contended-second', second.id)),
+        ]);
+        expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+        expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1);
+
+        const stored = await Database.getDeviceByDeviceId('contended-device-id');
+        expect(stored).toBeDefined();
+        expect([first.id, second.id]).toContain(stored!.userId);
+    });
+
     test('rejects a valid JWT when its user does not own the referenced device', async () => {
         const first = await signupWithOtp({
             phone: '555-1013', pin: '1234', deviceId: 'owned-device', deviceName: 'first'
