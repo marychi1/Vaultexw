@@ -12,6 +12,12 @@ async function signupWithOtp(payload: { phone: string; [key: string]: unknown })
 }
 
 describe('Auth and OTP flows', () => {
+    if (process.env.POSTGRES_INTEGRATION_TESTS === 'true') {
+        test('runs against PostgreSQL rather than the file-backed test adapter', () => {
+            expect(Database.getPersistenceMode()).toBe('postgres');
+        });
+    }
+
     beforeEach(async () => {
         await Database.resetAll();
     });
