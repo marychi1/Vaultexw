@@ -379,8 +379,35 @@ class Database {
 
         const pool = await this.postgresReady();
         if (pool) {
-            await pool.query(`INSERT INTO devices (id,user_id,device_id,device_name,ip_address,user_agent,authorized,last_activity,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [device.id, device.userId, device.deviceId, device.deviceName, device.ipAddress, device.userAgent, device.authorized, device.lastActivity, device.createdAt]);
-            return device;
+            try {
+                await pool.query(
+                    `INSERT INTO devices (id,user_id,device_id,device_name,ip_address,user_agent,authorized,last_activity,created_at)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                    [device.id, device.userId, device.deviceId, device.deviceName, device.ipAddress, device.userAgent, device.authorized, device.lastActivity, device.createdAt]
+                );
+                return device;
+            } catch (error) {
+                const isUniqueViolation = typeof error === 'object' && error !== null &&
+                    'code' in error && error.code === '23505';
+                if (!isUniqueViolation) throw error;
+
+                // Another request may have claimed this device_id after our initial lookup.
+                const winner = await this.getDeviceByDeviceId(device.deviceId);
+                if (!winner) throw error;
+                if (winner.userId !== device.userId) {
+                    throw new Error('Device is already associated with another account');
+                }
+                return winner;
+            }
+        }
+
+        // Keep the in-memory fallback race-safe too: no await between this check and push.
+        const concurrentWinner = this.devices.find((entry) => entry.deviceId === device.deviceId);
+        if (concurrentWinner) {
+            if (concurrentWinner.userId !== device.userId) {
+                throw new Error('Device is already associated with another account');
+            }
+            return concurrentWinner;
         }
         this.devices.push(device);
         this.persist();
